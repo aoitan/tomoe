@@ -8,3 +8,6 @@ __pycache__/
 work*/
 runs/
 .tmp*/
+
+# Local config
+tomoe.local.toml

@@ -31,6 +31,16 @@ uv run tomoe \
   init
 ```
 
+設定をTOMLにまとめる場合:
+
+```sh
+uv run tomoe --config tomoe.local.toml init
+uv run tomoe --config tomoe.local.toml run
+uv run tomoe --config tomoe.local.toml all
+```
+
+`run` と `all` のイテレーション数は `iterations` を使います。CLIで `run 5` のように指定した値はconfigより優先されます。config内のパスはconfigファイルのあるディレクトリを基準に解決します。
+
 ```sh
 uv run tomoe \
   --workdir runs \
@@ -89,6 +99,12 @@ uv run --project ../pdca tomoe \
   run 3
 ```
 
+configを使う場合:
+
+```sh
+uv run --project ../pdca tomoe --config ../pdca/tomoe.local.toml all
+```
+
 このモードでは、Modifyフェーズのstdoutは `modify_n.md` として保存できますが、PDCA CLI側では `--target` へ上書きしません。`--extract-code-block` も不要です。`--target` はスナップショット対象として使えます。
 
 ## Git checkpoint
@@ -126,3 +142,4 @@ iter_n/
 - `--modify-mode`: `overwrite-target` はLLM出力で単一ファイルを上書きする。`direct-edit` はLLM CLIが直接編集した変更をそのまま使う
 - `--stream-tool-output`: 長時間実行中のツール出力を画面にも流す。`none` / `stderr` / `stdout` / `both`
 - `--git-checkpoint`: 各Modify前後のGitコミットハッシュ、status、diffを `iter_n/` に保存する
+- `--config`: TOML configを読み込む。CLI引数はconfigより優先する

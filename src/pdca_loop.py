@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import tomllib
 from pathlib import Path
 
 
@@ -76,13 +77,22 @@ Exit code: {exit_code}
 
 
 def main() -> int:
-    parser = build_parser()
+    config_path, config = load_config(sys.argv[1:])
+    parser = build_parser(config)
     args = parser.parse_args()
+    args.config = config_path
+    if args.artifact is None:
+        args.artifact = list(config.get("artifact", []))
+    if args.result_artifact is None:
+        args.result_artifact = list(config.get("result_artifact", []))
     runner = LoopRunner(args)
 
     if args.command == "init":
         runner.initialize()
     elif args.command == "run":
+        runner.run_iterations(args.iterations)
+    elif args.command == "all":
+        runner.initialize()
         runner.run_iterations(args.iterations)
     elif args.command == "step":
         runner.run_step(args.n)
@@ -91,79 +101,91 @@ def main() -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentParser:
+    config = config or {}
     parser = argparse.ArgumentParser(
         description="Run an LLM-based evaluate/modify/execute improvement loop."
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        help="TOML config file. CLI arguments override config values.",
+    )
+    parser.add_argument(
         "--workdir",
         type=Path,
-        default=Path("runs"),
+        default=config.get("workdir", Path("runs")),
         help="Directory where result/eval/snapshot files are written.",
     )
     parser.add_argument(
         "--tool-command",
-        required=True,
+        required="tool_command" not in config,
+        default=config.get("tool_command"),
         help="Shell command that runs the current tool and prints the experiment result.",
     )
     parser.add_argument(
         "--llm-command",
-        required=True,
+        required="llm_command" not in config,
+        default=config.get("llm_command"),
         help="Shell command for the LLM CLI. The generated prompt is passed to stdin.",
     )
     parser.add_argument(
         "--target",
         type=Path,
+        default=config.get("target"),
         help="Tool file or prompt file overwritten by the modify phase.",
     )
     parser.add_argument(
         "--artifact",
         action="append",
         type=Path,
-        default=[],
+        default=None,
         help="Additional code/prompt file to copy into each iter_n snapshot. Repeatable.",
     )
     parser.add_argument(
         "--result-artifact",
         action="append",
         type=Path,
-        default=[],
+        default=None,
         help="Additional tool output file or directory to append to result_n.md and copy into snapshots. Repeatable.",
     )
     parser.add_argument(
         "--project-description",
-        default="...",
+        default=config.get("project_description", "..."),
         help="Text inserted into the project description section.",
     )
     parser.add_argument(
         "--project-goal",
-        default="...",
+        default=config.get("project_goal", "..."),
         help="Text inserted into the project goal section.",
     )
     parser.add_argument(
         "--eval-template",
         type=Path,
+        default=config.get("eval_template"),
         help="Markdown template for evaluation. Supports {project_description}, {project_goal}, {result}.",
     )
     parser.add_argument(
         "--modify-template",
         type=Path,
+        default=config.get("modify_template"),
         help="Markdown template for modification. Supports {project_description}, {project_goal}, {result}, {evaluation}.",
     )
     parser.add_argument(
         "--extract-code-block",
-        default=None,
+        default=config.get("extract_code_block"),
         help="When overwriting --target, extract the first fenced code block. Optionally name a language, e.g. python.",
     )
     parser.add_argument(
         "--keep-modify-output",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("keep_modify_output", False),
         help="Keep raw modify output as modify_n.md.",
     )
     parser.add_argument(
         "--modify-mode",
         choices=("overwrite-target", "direct-edit"),
-        default="overwrite-target",
+        default=config.get("modify_mode", "overwrite-target"),
         help=(
             "How modify output is applied. overwrite-target writes LLM output to "
             "--target; direct-edit assumes the LLM command edits files itself."
@@ -172,12 +194,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stream-tool-output",
         choices=("none", "stderr", "stdout", "both"),
-        default="stderr",
+        default=config.get("stream_tool_output", "stderr"),
         help="Stream tool output while it runs. stdout is still saved as result_n.md.",
     )
     parser.add_argument(
         "--git-checkpoint",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("git_checkpoint", False),
         help="Record git HEAD, status, and diffs before and after each modify phase.",
     )
 
@@ -185,7 +208,22 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Run the current tool and save result_0.md.")
 
     run_parser = subparsers.add_parser("run", help="Run N improvement iterations.")
-    run_parser.add_argument("iterations", type=positive_int)
+    run_parser.add_argument(
+        "iterations",
+        type=positive_int,
+        nargs="?",
+        default=config.get("iterations", 1),
+        help="Number of iterations. Defaults to config iterations or 1.",
+    )
+
+    all_parser = subparsers.add_parser("all", help="Run init, then N iterations.")
+    all_parser.add_argument(
+        "iterations",
+        type=positive_int,
+        nargs="?",
+        default=config.get("iterations", 1),
+        help="Number of iterations. Defaults to config iterations or 1.",
+    )
 
     step_parser = subparsers.add_parser("step", help="Run one specific iteration number.")
     step_parser.add_argument("n", type=positive_int)
@@ -197,6 +235,57 @@ def positive_int(raw: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return value
+
+
+def load_config(argv: list[str]) -> tuple[Path | None, dict[str, object]]:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", type=Path)
+    args, _ = parser.parse_known_args(argv)
+    if args.config is None:
+        return None, {}
+
+    config_path = args.config
+    try:
+        raw_config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"failed to read config {config_path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"failed to parse config {config_path}: {exc}") from exc
+    return config_path, normalize_config(raw_config, config_path.parent)
+
+
+def normalize_config(raw_config: dict[str, object], base_dir: Path) -> dict[str, object]:
+    aliases = {
+        "work_dir": "workdir",
+        "artifacts": "artifact",
+        "result_artifacts": "result_artifact",
+    }
+    config = {aliases.get(key, key): value for key, value in raw_config.items()}
+
+    path_keys = {"workdir", "target", "eval_template", "modify_template"}
+    for key in path_keys:
+        if key in config and config[key] is not None:
+            config[key] = resolve_config_path(Path(str(config[key])), base_dir)
+
+    path_list_keys = {"artifact", "result_artifact"}
+    for key in path_list_keys:
+        if key in config:
+            value = config[key]
+            if isinstance(value, str):
+                value = [value]
+            if not isinstance(value, list):
+                raise SystemExit(f"config key {key} must be a string or list of strings")
+            config[key] = [resolve_config_path(Path(str(item)), base_dir) for item in value]
+
+    if "iterations" in config:
+        config["iterations"] = positive_int(str(config["iterations"]))
+    return config
+
+
+def resolve_config_path(path: Path, base_dir: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return base_dir / path
 
 
 class LoopRunner:
