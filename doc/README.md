@@ -80,6 +80,22 @@ uv run tomoe \
 
 `--result-artifact` は複数指定できます。通常ファイルは `result_n.md` に fenced code block として埋め込み、ディレクトリは内容一覧を埋め込みます。指定したアウトプットは `iter_n/` のスナップショットにもコピーされます。
 
+configでは、評価入力に本文を載せたいファイルを `[[result.includes]]` で指定できます。tomoeはファイル内容を埋め込むだけで、評価方法は `note` と評価テンプレートに書きます。
+
+```toml
+[[result.includes]]
+path = "../poc/analysis_docs/analysis_report.md"
+label = "analysis report"
+note = "Status, Source Coverage, Fallback docs generated, Weak or failed docs, Step History を評価する"
+
+[[result.includes]]
+path = "../poc/analysis_docs/index.md"
+label = "analysis index"
+note = "索引として有用か、失敗状態だけになっていないかを評価する"
+```
+
+大きなファイルを一部だけ埋め込みたい場合は `max_chars` を指定できます。
+
 ## Codexのような編集エージェントを使う
 
 `codex exec` のように、LLM CLIがファイル全文をstdoutへ返すのではなく、作業ツリーを直接編集する場合は `--modify-mode direct-edit` を使います。

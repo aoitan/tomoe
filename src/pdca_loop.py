@@ -85,6 +85,7 @@ def main() -> int:
         args.artifact = list(config.get("artifact", []))
     if args.result_artifact is None:
         args.result_artifact = list(config.get("result_artifact", []))
+    args.result_include = list(config.get("result_include", []))
     runner = LoopRunner(args)
 
     if args.command == "init":
@@ -261,6 +262,18 @@ def normalize_config(raw_config: dict[str, object], base_dir: Path) -> dict[str,
         "result_artifacts": "result_artifact",
     }
     config = {aliases.get(key, key): value for key, value in raw_config.items()}
+    result_config = raw_config.get("result", {})
+    if isinstance(result_config, dict):
+        config["result_include"] = normalize_result_includes(
+            result_config.get("includes", []),
+            base_dir,
+        )
+        if "include_files" in result_config:
+            include_files = normalize_result_include_files(
+                result_config["include_files"],
+                base_dir,
+            )
+            config["result_include"].extend(include_files)
 
     path_keys = {"workdir", "target", "eval_template", "modify_template"}
     for key in path_keys:
@@ -280,6 +293,35 @@ def normalize_config(raw_config: dict[str, object], base_dir: Path) -> dict[str,
     if "iterations" in config:
         config["iterations"] = positive_int(str(config["iterations"]))
     return config
+
+
+def normalize_result_includes(value: object, base_dir: Path) -> list[dict[str, object]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise SystemExit("config key result.includes must be a list of tables")
+
+    includes = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise SystemExit("each result.includes item must be a table")
+        if "path" not in item:
+            raise SystemExit("each result.includes item requires a path")
+        include = dict(item)
+        include["path"] = resolve_config_path(Path(str(include["path"])), base_dir)
+        includes.append(include)
+    return includes
+
+
+def normalize_result_include_files(value: object, base_dir: Path) -> list[dict[str, object]]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        raise SystemExit("config key result.include_files must be a string or list of strings")
+    return [
+        {"path": resolve_config_path(Path(str(path)), base_dir)}
+        for path in value
+    ]
 
 
 def resolve_config_path(path: Path, base_dir: Path) -> Path:
@@ -382,6 +424,9 @@ class LoopRunner:
 
     def artifacts(self) -> list[Path]:
         paths = [*self.args.artifact, *self.args.result_artifact]
+        for path in result_include_paths(self.args.result_include):
+            if not is_covered_by_snapshot_source(path, paths):
+                paths.append(path)
         if self.args.target is not None:
             paths.insert(0, self.args.target)
         return paths
@@ -452,12 +497,16 @@ class LoopRunner:
         return self.append_result_artifacts(result)
 
     def append_result_artifacts(self, result: str) -> str:
-        if not self.args.result_artifact:
+        if not self.args.result_artifact and not self.args.result_include:
             return result
 
         sections = [result.rstrip(), "", "# 追加アウトプット"]
         for path in self.args.result_artifact:
             sections.append(render_result_artifact(path))
+        if self.args.result_include:
+            sections.extend(["", "# 追加アウトプット本文"])
+            for include in self.args.result_include:
+                sections.append(render_result_include(include))
         return "\n\n".join(sections).rstrip() + "\n"
 
     def run_llm(self, prompt: str) -> str:
@@ -587,6 +636,67 @@ def render_result_artifact(path: Path) -> str:
     content = path.read_text(encoding="utf-8", errors="replace")
     language = code_block_language(path)
     return f"## {path}\n\n```{language}\n{content.rstrip()}\n```"
+
+
+def render_result_include(include: dict[str, object]) -> str:
+    path = include["path"]
+    if not isinstance(path, Path):
+        path = Path(str(path))
+    label = str(include.get("label") or path)
+    note = str(include.get("note") or "").strip()
+    max_chars = include.get("max_chars")
+
+    lines = [f"## {label}"]
+    if note:
+        lines.extend(["", f"評価メモ: {note}"])
+
+    if not path.exists():
+        lines.extend(["", f"指定されたアウトプットが見つかりませんでした: `{path}`"])
+        return "\n".join(lines)
+    if path.is_dir():
+        lines.extend(["", f"ディレクトリは本文埋め込み対象外です: `{path}`"])
+        return "\n".join(lines)
+    if not path.is_file():
+        lines.extend(["", f"通常ファイルではないため、内容は埋め込みませんでした: `{path}`"])
+        return "\n".join(lines)
+
+    content = path.read_text(encoding="utf-8", errors="replace").rstrip()
+    if max_chars is not None:
+        limit = positive_int(str(max_chars))
+        if len(content) > limit:
+            content = content[:limit].rstrip() + "\n\n...[truncated]"
+
+    language = code_block_language(path)
+    lines.extend(["", f"Path: `{path}`", "", f"```{language}", content, "```"])
+    return "\n".join(lines)
+
+
+def result_include_paths(includes: list[dict[str, object]]) -> list[Path]:
+    paths = []
+    for include in includes:
+        path = include.get("path")
+        if isinstance(path, Path):
+            paths.append(path)
+        elif path is not None:
+            paths.append(Path(str(path)))
+    return paths
+
+
+def is_covered_by_snapshot_source(path: Path, sources: list[Path]) -> bool:
+    for source in sources:
+        if path == source:
+            return True
+        if source.exists() and source.is_dir() and path_is_relative_to(path, source):
+            return True
+    return False
+
+
+def path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def code_block_language(path: Path) -> str:
