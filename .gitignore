@@ -1,0 +1,8 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Generated PDCA loop outputs
+work*/
+runs/
+.tmp*/
