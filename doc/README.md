@@ -98,6 +98,27 @@ note = "索引として有用か、失敗状態だけになっていないかを
 
 大きなファイルを一部だけ埋め込みたい場合は `max_chars` を指定できます。
 
+## 評価と修正のLLMを分ける
+
+`--llm-command` は評価と修正の共通デフォルトです。必要に応じて、評価フェーズだけ `--eval-llm-command`、修正フェーズだけ `--modify-llm-command` で上書きできます。
+
+```toml
+llm_command = "codex exec"
+eval_llm_command = "llm -m evaluator-model"
+modify_llm_command = "codex exec"
+```
+
+CLIで指定する場合:
+
+```sh
+uv run tomoe \
+  --tool-command "python3 src/my_tool.py" \
+  --eval-llm-command "llm -m evaluator-model" \
+  --modify-llm-command "codex exec" \
+  --target src/my_tool.py \
+  run 3
+```
+
 ## Codexのような編集エージェントを使う
 
 `codex exec` のように、LLM CLIがファイル全文をstdoutへ返すのではなく、作業ツリーを直接編集する場合は `--modify-mode direct-edit` を使います。
@@ -149,7 +170,9 @@ iter_n/
 ## オプション
 
 - `--tool-command`: 現在のツールを実行するコマンド
-- `--llm-command`: プロンプトを標準入力で受け取り、結果を標準出力へ返すLLM CLI
+- `--llm-command`: 評価と修正で共通利用するLLM CLI
+- `--eval-llm-command`: 評価フェーズ用LLM CLI。未指定なら `--llm-command` を使う
+- `--modify-llm-command`: 修正フェーズ用LLM CLI。未指定なら `--llm-command` を使う
 - `--target`: Modifyフェーズで上書きするコードまたはプロンプト
 - `--artifact`: `iter_n/` に追加で保存するファイル。複数指定可能
 - `--result-artifact`: stdout以外に評価したいツール出力。`result_n.md` へ埋め込み、`iter_n/` にも保存する。複数指定可能

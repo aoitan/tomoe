@@ -80,6 +80,7 @@ def main() -> int:
     config_path, config = load_config(sys.argv[1:])
     parser = build_parser(config)
     args = parser.parse_args()
+    validate_llm_commands(args)
     args.config = config_path
     if args.artifact is None:
         args.artifact = list(config.get("artifact", []))
@@ -126,9 +127,18 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
     )
     parser.add_argument(
         "--llm-command",
-        required="llm_command" not in config,
         default=config.get("llm_command"),
-        help="Shell command for the LLM CLI. The generated prompt is passed to stdin.",
+        help="Default shell command for the LLM CLI. The generated prompt is passed to stdin.",
+    )
+    parser.add_argument(
+        "--eval-llm-command",
+        default=config.get("eval_llm_command"),
+        help="LLM CLI command for the evaluation phase. Defaults to --llm-command.",
+    )
+    parser.add_argument(
+        "--modify-llm-command",
+        default=config.get("modify_llm_command"),
+        help="LLM CLI command for the modify phase. Defaults to --llm-command.",
     )
     parser.add_argument(
         "--target",
@@ -236,6 +246,17 @@ def positive_int(raw: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return value
+
+
+def validate_llm_commands(args: argparse.Namespace) -> None:
+    if args.llm_command is not None:
+        return
+    if args.eval_llm_command is not None and args.modify_llm_command is not None:
+        return
+    raise SystemExit(
+        "--llm-command is required unless both --eval-llm-command and "
+        "--modify-llm-command are provided"
+    )
 
 
 def load_config(argv: list[str]) -> tuple[Path | None, dict[str, object]]:
@@ -358,7 +379,7 @@ class LoopRunner:
         self.log(f"[iter {n}] evaluating {previous_result_path}")
         result = previous_result_path.read_text(encoding="utf-8")
         eval_prompt = self.render_eval_prompt(result)
-        evaluation = self.run_llm(eval_prompt)
+        evaluation = self.run_llm(eval_prompt, self.eval_llm_command())
         eval_path = self.eval_path(n)
         eval_path.write_text(evaluation, encoding="utf-8")
 
@@ -369,7 +390,7 @@ class LoopRunner:
 
         self.log(f"[iter {n}] modifying with mode: {self.args.modify_mode}")
         modify_prompt = self.render_modify_prompt(result, evaluation)
-        modify_output = self.run_llm(modify_prompt)
+        modify_output = self.run_llm(modify_prompt, self.modify_llm_command())
         if self.args.keep_modify_output:
             self.modify_path(n).write_text(modify_output, encoding="utf-8")
 
@@ -415,6 +436,8 @@ class LoopRunner:
             f"iteration: {n}\n"
             f"tool_command: {self.args.tool_command}\n"
             f"llm_command: {self.args.llm_command}\n"
+            f"eval_llm_command: {self.eval_llm_command()}\n"
+            f"modify_llm_command: {self.modify_llm_command()}\n"
             f"target: {self.args.target}\n"
             f"modify_mode: {self.args.modify_mode}\n"
             f"git_checkpoint: {self.args.git_checkpoint}\n"
@@ -509,9 +532,9 @@ class LoopRunner:
                 sections.append(render_result_include(include))
         return "\n\n".join(sections).rstrip() + "\n"
 
-    def run_llm(self, prompt: str) -> str:
+    def run_llm(self, prompt: str, command: str) -> str:
         completed = subprocess.run(
-            self.args.llm_command,
+            command,
             input=prompt,
             shell=True,
             text=True,
@@ -521,12 +544,24 @@ class LoopRunner:
         if completed.returncode != 0:
             raise SystemExit(
                 "LLM command failed\n"
-                f"command: {self.args.llm_command}\n"
+                f"command: {command}\n"
                 f"exit code: {completed.returncode}\n"
                 f"stdout:\n{completed.stdout}\n"
                 f"stderr:\n{completed.stderr}"
             )
         return completed.stdout
+
+    def eval_llm_command(self) -> str:
+        command = self.args.eval_llm_command or self.args.llm_command
+        if command is None:
+            raise SystemExit("--eval-llm-command or --llm-command is required")
+        return command
+
+    def modify_llm_command(self) -> str:
+        command = self.args.modify_llm_command or self.args.llm_command
+        if command is None:
+            raise SystemExit("--modify-llm-command or --llm-command is required")
+        return command
 
     def apply_modify_output(self, modify_output: str) -> None:
         if self.args.modify_mode == "direct-edit":
