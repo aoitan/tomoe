@@ -8,8 +8,8 @@ tool_command = "../../test_kuroko.sh"
 llm_command = "codex exec"
 target = "../../poc/isohyps/project_analysis.py"
 
-eval_template = "../test_template/eval_template.md"
-modify_template = "../test_template/modify_template.md"
+eval_template = "./eval_template.md"
+modify_template = "./modify_template.md"
 
 keep_modify_output = true
 result_artifacts = ["../../poc/analysis_docs"]

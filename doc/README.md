@@ -40,6 +40,7 @@ uv run tomoe --config tomoe.local.toml all
 ```
 
 `run` と `all` のイテレーション数は `iterations` を使います。CLIで `run 5` のように指定した値はconfigより優先されます。config内のパスはconfigファイルのあるディレクトリを基準に解決します。
+`example/` にサンプルconfigとプロンプトテンプレートがあります。
 
 ```sh
 uv run tomoe \
