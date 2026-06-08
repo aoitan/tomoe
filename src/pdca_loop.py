@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import re
 import shutil
 import subprocess
@@ -362,10 +363,21 @@ class LoopRunner:
         self.log(f"[init] running tool: {self.args.tool_command}")
         result_path.write_text(self.run_tool(), encoding="utf-8")
         self.log(f"[init] wrote {result_path}")
+        self.save_status(
+            loop_num=0,
+            status="ready",
+            last_result=result_path.name,
+            last_eval=None,
+            last_modify=None,
+        )
 
     def run_iterations(self, iterations: int) -> None:
         self.ensure_initialized()
-        for n in range(1, iterations + 1):
+        last_n = self.detect_last_iteration()
+        start_n = last_n + 1
+        end_n = last_n + iterations
+        self.log(f"[run] resuming from iter {start_n} to {end_n}")
+        for n in range(start_n, end_n + 1):
             self.run_step(n)
 
     def run_step(self, n: int) -> None:
@@ -376,12 +388,28 @@ class LoopRunner:
         if not previous_result_path.exists():
             raise SystemExit(f"missing previous result: {previous_result_path}")
 
+        self.save_status(
+            loop_num=n,
+            status="running",
+            last_result=previous_result_path.name,
+            last_eval=None,
+            last_modify=None,
+        )
+
         self.log(f"[iter {n}] evaluating {previous_result_path}")
         result = previous_result_path.read_text(encoding="utf-8")
         eval_prompt = self.render_eval_prompt(result)
         evaluation = self.run_llm(eval_prompt, self.eval_llm_command())
         eval_path = self.eval_path(n)
         eval_path.write_text(evaluation, encoding="utf-8")
+
+        self.save_status(
+            loop_num=n,
+            status="running",
+            last_result=previous_result_path.name,
+            last_eval=eval_path.name,
+            last_modify=None,
+        )
 
         self.log(f"[iter {n}] snapshotting inputs")
         snapshot_dir = self.snapshot(n, previous_result_path, eval_path)
@@ -391,8 +419,20 @@ class LoopRunner:
         self.log(f"[iter {n}] modifying with mode: {self.args.modify_mode}")
         modify_prompt = self.render_modify_prompt(result, evaluation)
         modify_output = self.run_llm(modify_prompt, self.modify_llm_command())
+        
+        modify_path_val = None
         if self.args.keep_modify_output:
-            self.modify_path(n).write_text(modify_output, encoding="utf-8")
+            m_path = self.modify_path(n)
+            m_path.write_text(modify_output, encoding="utf-8")
+            modify_path_val = m_path.name
+
+        self.save_status(
+            loop_num=n,
+            status="running",
+            last_result=previous_result_path.name,
+            last_eval=eval_path.name,
+            last_modify=modify_path_val,
+        )
 
         self.apply_modify_output(modify_output)
         if self.args.git_checkpoint:
@@ -407,6 +447,14 @@ class LoopRunner:
         self.log(f"[iter {n}] wrote {snapshot_dir}")
         self.log(f"[iter {n}] modify phase completed")
         self.log(f"[iter {n}] wrote {current_result_path}")
+
+        self.save_status(
+            loop_num=n,
+            status="ready",
+            last_result=current_result_path.name,
+            last_eval=eval_path.name,
+            last_modify=modify_path_val,
+        )
 
     def ensure_initialized(self) -> None:
         if not self.result_path(0).exists():
@@ -632,6 +680,52 @@ class LoopRunner:
 
     def log(self, message: str) -> None:
         print(message, file=sys.stderr, flush=True)
+
+    def detect_last_iteration(self) -> int:
+        status_file = self.workdir / "status.json"
+        if status_file.exists():
+            try:
+                data = json.loads(status_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "current_loop" in data:
+                    return int(data["current_loop"])
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                self.log(f"warning: failed to read status.json, falling back: {exc}")
+
+        # Fallback to scanning result_*.md
+        max_loop = 0
+        if self.workdir.exists():
+            for path in self.workdir.glob("result_*.md"):
+                match = re.match(r"^result_(\d+)\.md$", path.name)
+                if match:
+                    try:
+                        loop_num = int(match.group(1))
+                        if loop_num > max_loop:
+                            max_loop = loop_num
+                    except ValueError:
+                        continue
+        return max_loop
+
+    def save_status(
+        self,
+        loop_num: int,
+        status: str,
+        last_result: str | None = None,
+        last_eval: str | None = None,
+        last_modify: str | None = None,
+    ) -> None:
+        data = {
+            "current_loop": loop_num,
+            "last_result": last_result,
+            "last_eval": last_eval,
+            "last_modify": last_modify,
+            "status": status,
+        }
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        status_file = self.workdir / "status.json"
+        try:
+            status_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as exc:
+            self.log(f"warning: failed to save status.json: {exc}")
 
 
 def read_template(path: Path | None, default: str) -> str:
