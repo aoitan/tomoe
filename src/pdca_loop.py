@@ -215,6 +215,12 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
         default=config.get("git_checkpoint", False),
         help="Record git HEAD, status, and diffs before and after each modify phase.",
     )
+    parser.add_argument(
+        "--git-commit",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("git_commit", True),
+        help="Automatically commit target/artifact changes after modify phase if not already committed.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("init", help="Run the current tool and save result_0.md.")
@@ -438,6 +444,8 @@ class LoopRunner:
         if self.args.git_checkpoint:
             self.write_git_checkpoint(snapshot_dir / "git_after")
 
+        self.commit_changes(n)
+
         self.log(f"[iter {n}] running tool: {self.args.tool_command}")
         current_result = self.run_tool()
         current_result_path = self.result_path(n)
@@ -652,6 +660,49 @@ class LoopRunner:
                     f"stderr:\n{completed.stderr}"
                 )
             (output_dir / filename).write_text(content, encoding="utf-8")
+
+    def commit_changes(self, n: int) -> None:
+        if not self.args.git_commit:
+            return
+
+        files_to_add = []
+        if self.args.target is not None:
+            files_to_add.append(self.args.target)
+        for art in self.artifacts():
+            if art.exists() and art.is_file():
+                files_to_add.append(art)
+
+        files_to_add = sorted(list(set(files_to_add)))
+        if not files_to_add:
+            return
+
+        # git add
+        cmd_add = ["git", "add"] + [str(f) for f in files_to_add]
+        subprocess.run(cmd_add, check=False)
+
+        # Check for staged changes
+        completed_diff = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            check=False,
+        )
+        if completed_diff.returncode == 1:
+            self.log(f"[iter {n}] unstaged changes detected, committing automatically")
+            commit_msg = f"pdca: iteration {n} modify"
+            cmd_commit = ["git", "commit", "-m", commit_msg]
+            completed_commit = subprocess.run(
+                cmd_commit,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed_commit.returncode == 0:
+                self.log(f"[iter {n}] committed successfully: {commit_msg}")
+            else:
+                self.log(
+                    f"[iter {n}] warning: git commit failed (exit code {completed_commit.returncode})\n"
+                    f"stdout: {completed_commit.stdout}\n"
+                    f"stderr: {completed_commit.stderr}"
+                )
 
     def extract_target_text(self, modify_output: str) -> str:
         language = self.args.extract_code_block

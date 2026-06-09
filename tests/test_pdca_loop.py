@@ -24,6 +24,7 @@ def create_runner(tmp_path: Path, **kwargs) -> LoopRunner:
         modify_mode="overwrite-target",
         stream_tool_output="none",
         git_checkpoint=False,
+        git_commit=False,
     )
     for k, v in kwargs.items():
         setattr(args, k, v)
@@ -139,3 +140,52 @@ def test_run_iterations_resume(tmp_path: Path):
     assert data["last_eval"] == "eval_5.md"
     assert data["last_modify"] == "modify_5.md"
     assert data["status"] == "ready"
+
+def test_git_commit_on_modify(tmp_path: Path, monkeypatch):
+    import subprocess
+    
+    # Initialize a git repo in tmp_path
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    
+    # Create initial files and commit
+    target_file = tmp_path / "target.py"
+    target_file.write_text("print('hello')", encoding="utf-8")
+    
+    subprocess.run(["git", "add", "target.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+    
+    # Setup previous run outputs
+    (tmp_path / "result_0.md").write_text("res0", encoding="utf-8")
+    status_data = {
+        "current_loop": 0,
+        "last_result": "result_0.md",
+        "last_eval": None,
+        "last_modify": None,
+        "status": "ready"
+    }
+    (tmp_path / "status.json").write_text(json.dumps(status_data), encoding="utf-8")
+    
+    # Change cwd to tmp_path
+    monkeypatch.chdir(tmp_path)
+    
+    # Create runner with git_commit=True
+    runner = create_runner(tmp_path, target=Path("target.py"), git_commit=True)
+    
+    from unittest.mock import MagicMock
+    runner.run_tool = MagicMock(return_value="tool output")
+    runner.run_llm = MagicMock(return_value="```python\nprint('hello modified')\n```")
+    
+    # Run the step
+    runner.run_step(1)
+    
+    # Assert git commit exists
+    completed = subprocess.run(
+        ["git", "log", "-n", "1", "--oneline"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    assert "pdca: iteration 1 modify" in completed.stdout
