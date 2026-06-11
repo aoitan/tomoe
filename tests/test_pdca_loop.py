@@ -189,3 +189,23 @@ def test_git_commit_on_modify(tmp_path: Path, monkeypatch):
         check=True
     )
     assert "pdca: iteration 1 modify" in completed.stdout
+
+def test_execution_time_stats(capsys, monkeypatch, tmp_path):
+    import sys
+    from pdca_loop import main
+
+    (tmp_path / "config.toml").write_text('tool_command = "echo hello"\nllm_command = "echo llm"\nworkdir = "runs"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["src/pdca_loop.py", "--config", "config.toml", "init"])
+    
+    exit_code = main()
+    assert exit_code == 0
+    
+    captured = capsys.readouterr()
+    stderr = captured.err
+    
+    assert "--- 実行時間統計 ---" in stderr
+    assert "開始時刻:" in stderr
+    assert "終了時刻:" in stderr
+    assert "総時間:" in stderr
+    assert "平均イテレーション時間:" in stderr

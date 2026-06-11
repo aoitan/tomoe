@@ -78,6 +78,7 @@ Exit code: {exit_code}
 
 
 def main() -> int:
+    start_time = dt.datetime.now()
     config_path, config = load_config(sys.argv[1:])
     parser = build_parser(config)
     args = parser.parse_args()
@@ -90,17 +91,31 @@ def main() -> int:
     args.result_include = list(config.get("result_include", []))
     runner = LoopRunner(args)
 
-    if args.command == "init":
-        runner.initialize()
-    elif args.command == "run":
-        runner.run_iterations(args.iterations)
-    elif args.command == "all":
-        runner.initialize()
-        runner.run_iterations(args.iterations)
-    elif args.command == "step":
-        runner.run_step(args.n)
-    else:
-        parser.error(f"unknown command: {args.command}")
+    try:
+        if args.command == "init":
+            runner.initialize()
+        elif args.command == "run":
+            runner.run_iterations(args.iterations)
+        elif args.command == "all":
+            runner.initialize()
+            runner.run_iterations(args.iterations)
+        elif args.command == "step":
+            runner.run_step(args.n)
+        else:
+            parser.error(f"unknown command: {args.command}")
+    finally:
+        end_time = dt.datetime.now()
+        total_duration = (end_time - start_time).total_seconds()
+        print("\n--- 実行時間統計 ---", file=sys.stderr)
+        print(f"開始時刻: {start_time.strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
+        print(f"終了時刻: {end_time.strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
+        print(f"総時間: {total_duration:.2f}秒", file=sys.stderr)
+        if runner.step_durations:
+            avg_duration = sum(runner.step_durations) / len(runner.step_durations)
+            print(f"平均イテレーション時間: {avg_duration:.2f}秒 (計 {len(runner.step_durations)} 回)", file=sys.stderr)
+        else:
+            print("平均イテレーション時間: N/A", file=sys.stderr)
+        print("--------------------", file=sys.stderr)
     return 0
 
 
@@ -362,6 +377,7 @@ class LoopRunner:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.workdir = args.workdir
+        self.step_durations: list[float] = []
 
     def initialize(self) -> None:
         self.workdir.mkdir(parents=True, exist_ok=True)
@@ -387,6 +403,7 @@ class LoopRunner:
             self.run_step(n)
 
     def run_step(self, n: int) -> None:
+        start_step_time = dt.datetime.now()
         self.ensure_initialized()
         self.ensure_target()
 
@@ -463,6 +480,7 @@ class LoopRunner:
             last_eval=eval_path.name,
             last_modify=modify_path_val,
         )
+        self.step_durations.append((dt.datetime.now() - start_step_time).total_seconds())
 
     def ensure_initialized(self) -> None:
         if not self.result_path(0).exists():
