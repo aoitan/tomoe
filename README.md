@@ -86,12 +86,12 @@ configでは、評価入力に本文を載せたいファイルを `[[result.inc
 
 ```toml
 [[result.includes]]
-path = "../isohype/analysis_docs/analysis_report.md"
+path = "../isohyps/analysis_docs/analysis_report.md"
 label = "analysis report"
 note = "Status, Source Coverage, Fallback docs generated, Weak or failed docs, Step History を評価する"
 
 [[result.includes]]
-path = "../isohype/analysis_docs/index.md"
+path = "../isohyps/analysis_docs/index.md"
 label = "analysis index"
 note = "索引として有用か、失敗状態だけになっていないかを評価する"
 ```

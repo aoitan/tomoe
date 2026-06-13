@@ -8,23 +8,23 @@ tool_command = "../../test_kuroko.sh"
 llm_command = "codex exec"
 # eval_llm_command = "llm -m evaluator-model"
 # modify_llm_command = "codex exec"
-target = "../../isohype/isohyps/project_analysis.py"
+target = "../../isohyps/isohyps/project_analysis.py"
 
 eval_template = "./eval_template.md"
 modify_template = "./modify_template.md"
 
 keep_modify_output = true
-result_artifacts = ["../../isohype/analysis_docs"]
+result_artifacts = ["../../isohyps/analysis_docs"]
 modify_mode = "direct-edit"
 git_checkpoint = true
 stream_tool_output = "stderr"
 
 [[result.includes]]
-path = "../../isohype/analysis_docs/analysis_report.md"
+path = "../../isohyps/analysis_docs/analysis_report.md"
 label = "analysis report"
 note = "Status, Source Coverage, Fallback docs generated, Weak or failed docs, Step History を評価する"
 
 [[result.includes]]
-path = "../../isohype/analysis_docs/index.md"
+path = "../../isohyps/analysis_docs/index.md"
 label = "analysis index"
 note = "索引として有用か、失敗状態だけになっていないかを評価する"
