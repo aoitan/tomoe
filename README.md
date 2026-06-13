@@ -86,12 +86,12 @@ configでは、評価入力に本文を載せたいファイルを `[[result.inc
 
 ```toml
 [[result.includes]]
-path = "../poc/analysis_docs/analysis_report.md"
+path = "../isohype/analysis_docs/analysis_report.md"
 label = "analysis report"
 note = "Status, Source Coverage, Fallback docs generated, Weak or failed docs, Step History を評価する"
 
 [[result.includes]]
-path = "../poc/analysis_docs/index.md"
+path = "../isohype/analysis_docs/index.md"
 label = "analysis index"
 note = "索引として有用か、失敗状態だけになっていないかを評価する"
 ```
@@ -124,8 +124,8 @@ uv run tomoe \
 `codex exec` のように、LLM CLIがファイル全文をstdoutへ返すのではなく、作業ツリーを直接編集する場合は `--modify-mode direct-edit` を使います。
 
 ```sh
-uv run --project ../pdca tomoe \
-  --workdir ../pdca/work/ \
+uv run --project ../tomoe tomoe \
+  --workdir ../tomoe/work/ \
   --tool-command "../test_kuroko.sh" \
   --llm-command "codex exec" \
   --target isohyps/project_analysis.py \
@@ -141,7 +141,7 @@ uv run --project ../pdca tomoe \
 configを使う場合:
 
 ```sh
-uv run --project ../pdca tomoe --config ../pdca/tomoe.local.toml all
+uv run --project ../tomoe tomoe --config ../tomoe/tomoe.local.toml all
 ```
 
 このモードでは、Modifyフェーズのstdoutは `modify_n.md` として保存できますが、PDCA CLI側では `--target` へ上書きしません。`--extract-code-block` も不要です。`--target` はスナップショット対象として使えます。
