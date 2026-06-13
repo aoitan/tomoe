@@ -209,3 +209,89 @@ def test_execution_time_stats(capsys, monkeypatch, tmp_path):
     assert "終了時刻:" in stderr
     assert "総時間:" in stderr
     assert "平均イテレーション時間:" in stderr
+
+def test_review_generation(tmp_path: Path):
+    from unittest.mock import MagicMock
+    
+    # 準備：イテレーション結果ファイル
+    (tmp_path / "eval_1.md").write_text("eval 1 content")
+    (tmp_path / "eval_2.md").write_text("eval 2 content")
+    (tmp_path / "result_2.md").write_text("result 2 content")
+    
+    target_file = tmp_path / "target.py"
+    target_file.write_text("print('hello target')")
+    
+    # オプションの設定
+    runner = create_runner(
+        tmp_path,
+        target=target_file,
+        review_llm_command="echo review",
+        persistence_template=None,
+        redteam_template=None,
+        synthesis_template=None,
+    )
+    
+    # run_llm のモック化
+    runner.run_llm = MagicMock(side_effect=lambda prompt, cmd: f"LLM output for cmd={cmd}\nPrompt content:\n{prompt}")
+    
+    runner.run_review()
+    
+    # ファイルの生成検証
+    persistence_file = tmp_path / "eval_persistence_review.md"
+    redteam_file = tmp_path / "fresh_red_team_review.md"
+    synthesis_file = tmp_path / "next_move_synthesis.md"
+    
+    assert persistence_file.exists()
+    assert redteam_file.exists()
+    assert synthesis_file.exists()
+    
+    # persistence review の内容検証 (eval_1.md と eval_2.md の内容が含まれているはず)
+    p_content = persistence_file.read_text(encoding="utf-8")
+    assert "eval 1 content" in p_content
+    assert "eval 2 content" in p_content
+    
+    # red-team review の内容検証 (target.py と result_2.md の内容が含まれているはず)
+    r_content = redteam_file.read_text(encoding="utf-8")
+    assert "print('hello target')" in r_content
+    assert "result 2 content" in r_content
+    
+    # synthesis の内容検証
+    s_content = synthesis_file.read_text(encoding="utf-8")
+    assert "eval_persistence_review.md" in s_content
+    assert "fresh_red_team_review.md" in s_content
+
+def test_auto_review_after_run(tmp_path: Path):
+    from unittest.mock import MagicMock
+    
+    # イテレーションが実行された後に自動でレビューが呼ばれるかテスト
+    (tmp_path / "result_0.md").write_text("res0")
+    
+    target_file = tmp_path / "target.py"
+    target_file.write_text("print('hello')")
+    
+    # auto_review=True の場合
+    runner = create_runner(tmp_path, target=target_file, auto_review=True)
+    runner.run_tool = MagicMock(return_value="tool output")
+    runner.run_llm = MagicMock(return_value="llm response")
+    runner.run_review = MagicMock()
+    
+    runner.run_iterations(1)
+    
+    runner.run_review.assert_called_once()
+    
+    # auto_review=False の場合
+    # 新しいワークディレクトリを用意して実行
+    tmp_path_no = tmp_path / "no_review"
+    tmp_path_no.mkdir()
+    (tmp_path_no / "result_0.md").write_text("res0")
+    target_file_no = tmp_path_no / "target.py"
+    target_file_no.write_text("print('hello')")
+    
+    runner_no_review = create_runner(tmp_path_no, target=target_file_no, auto_review=False)
+    runner_no_review.run_tool = MagicMock(return_value="tool output")
+    runner_no_review.run_llm = MagicMock(return_value="llm response")
+    runner_no_review.run_review = MagicMock()
+    
+    runner_no_review.run_iterations(1)
+    runner_no_review.run_review.assert_not_called()
+

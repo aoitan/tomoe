@@ -1,81 +1,88 @@
-# Implementation Plan: RUN-RESUME-001 (Run Resume Capability)
+# Implementation Plan: ITERATION-REVIEW-001 (Iteration Overall Review Phase)
 
 ## 1. 概要とゴール (Summary & Goal)
-長時間におよぶ `tool-command` を実行する際、ループを追加で回したい場合に、毎回 `result_0` の初期化からやり直すのは非効率です。
-`tomoe run N` コマンドが `workdir` 内の最新の `result` 番号を自動検出して、次のループから処理を継続できるレジューム機能を実装します。
+イテレーション（PDCAループ）を重ねた結果、何が改善され、何が残り続けたかを客観的に評価し、次のアクション（構造的対策や初見品質の改善）を導き出すための「全体講評フェーズ」を追加します。
+
+このフェーズは以下の3つのサブタスクから構成されます：
+1. **Iteration Persistence Review**: `eval_n.md` 群から複数回にわたり残り続けた慢性的な問題と構造的解決策を抽出します。
+2. **Fresh Red-Team Review**: イテレーション履歴を考慮せず、最終成果物（ターゲットファイルと最終実行結果）だけから実用上の欠陥を厳しく指摘します。
+3. **Next Move Synthesis**: 上記2つのレビュー結果を突き合わせ、最優先の修正点、慢性問題（仕組みで解決）、初見品質問題（見せ方で解決）を整理して次の最小変更を決定します。
 
 ### Must (必須要件)
-- **最新結果の検出**:
-  - `workdir` 内の `status.json` から最新のループ情報を読み出す。
-  - `status.json` が存在しない場合は、 `workdir` 内の `result_*.md` を検索して最大の `*` を最新ループ番号（`last_n`）とみなすフォールバックロジックを用意する。
-- **レジューム処理**:
-  - `run N` を実行したとき、 `last_n + 1` から `last_n + N` までをイテレーション対象とする（既存の `result` ファイルを上書きしない）。
-  - イテレーション開始時に「継続範囲（例: イテレーション X から Y まで実行する旨）」を表示する。
-- **ステータス保存**:
-  - 毎イテレーションの完了時に `status.json` を `workdir` に書き出す（または更新する）。
-  - `status.json` の構成：
-    ```json
-    {
-      "current_loop": 10,
-      "last_result": "result_10.md",
-      "last_eval": "eval_10.md",
-      "last_modify": "modify_10.md",
-      "status": "ready"
-    }
-    ```
-    ※ `--keep-modify-output` が指定されていないなどの理由で `modify_n.md` 等が生成されなかった場合は `null` にする。
+- **サブコマンド `review` の追加**:
+  - `pdca_loop.py review` で、すでに `workdir` に存在する `eval_n.md` などの履歴をもとに、3段階の講評レポートを生成できるようにする。
+- **自動実行オプションの追加**:
+  - `run` または `all` コマンドで指定イテレーションが全て終わった後に、自動的に `review` フェーズを実行する。
+  - `--auto-review`（TOML: `auto_review`）オプション（デフォルト: `true`）で自動実行を制御可能にする。
+- **各レビューファイルの出力**:
+  - `{workdir}/eval_persistence_review.md`
+  - `{workdir}/fresh_red_team_review.md`
+  - `{workdir}/next_move_synthesis.md`
+- **レビュー用プロンプト・テンプレートの設定**:
+  - デフォルトのテンプレートを組み込みつつ、ファイルパスで外部からカスタマイズ可能にするオプションを追加する：
+    - `--persistence-template` / `persistence_template`
+    - `--redteam-template` / `redteam_template`
+    - `--synthesis-template` / `synthesis_template`
+- **レビュー用LLMコマンドの指定**:
+  - `--review-llm-command` / `review_llm_command` オプションを追加し、デフォルトは `llm_command` とする。
 
 ---
 
 ## 2. スコープ定義 (Scope Definition)
 ### ✅ In-Scope (やること)
-- `pdca` のプロジェクト構造への `pytest` によるテストの導入
-  - `pdca/tests/test_pdca_loop.py` の作成
-- **Core / CLI Logic** の修正 (`pdca/src/pdca_loop.py`):
-  - 最新の実行状態を判定する `detect_last_iteration` メソッドの実装（`status.json` のパース、およびファイル走査）。
-  - 各イテレーションの終了後に `status.json` を出力する `save_status` メソッドの実装。
-  - `run_iterations` の開始条件とループ範囲の修正、および開始ログ出力の実装。
-- テストコードでの動作検証:
-  - `test_detect_last_iteration_from_json`: `status.json` から最新状態が復元できること。
-  - `test_detect_last_iteration_fallback`: jsonがない場合に `result_*.md` の走査で復元できること。
-  - `test_run_iterations_resume`: すでに `result_0`〜`result_3` がある状態で `run 2` を行うと、 `result_4` と `result_5` が生成されること。
+- **Core / CLI Logic の修正 (`tomoe/src/pdca_loop.py`)**:
+  - 引数パーサー（`build_parser`）への `review` サブコマンド、および各種テンプレート・コマンド設定オプション of レビューの追加。
+  - TOML設定ファイルの読み込み処理（`normalize_config`）の更新。
+  - `LoopRunner` への `run_review` メソッドの実装（履歴読み込み、最終成果物取得、LLMへの問い合わせ、ファイル保存の各ステップ）。
+  - `run_iterations` の終了時、または `all` コマンドで最後のイテレーションが終わった後に `auto_review` が有効な場合、自動で `run_review` を呼び出すロジックの実装。
+- **ユニットテストの追加 (`tomoe/tests/test_pdca_loop.py`)**:
+  - `review` サブコマンドおよび各レビューファイルの生成処理が正しく動作することを検証するテストコード。
+  - 履歴が存在しない（イテレーションが一度も回っていない）場合に適切に処理されることを検証するテスト。
 
 ### ⛔ Non-Goals (やらないこと/スコープ外)
-- `init` コマンド自体の動作変更（`init` は常に `result_0` を再生成する）。
-- 他のコマンド（`step` など）の引数や振る舞いの変更。
+- `init` コマンドや `step` コマンド終了時に自動で全体レビューを走らせることはしない（全体講評は複数イテレーションの完了後を想定するため、`init` や中間ステップ単体では実行しない。ただし `review` コマンド単体での手動実行は可能）。
+- 今回追加するレビューテンプレート以外の、既存 of `eval_template` などの構成変更。
 
 ---
 
 ## 3. 実装ステップ (Implementation Steps)
 
-### Step 1: テスト環境の準備
-- *Action*: `pdca/pyproject.toml` に `pytest` および `pytest-mock` を追加（またはローカルで `uv add`）。
-- *Validation*: `pytest` コマンドでテストスイートが実行されることを確認。
+### Step 1: テストコードによる仕様の定義 (TDD - Red Phase)
+- *Action*: `tomoe/tests/test_pdca_loop.py` にテストケースを追加。
+  - `test_review_generation`: `eval_1.md` などのダミーファイルとターゲットファイルを用意した状態で `run_review()` を実行すると、3つのレビューファイルが指定したプロンプトで正しく出力されること。
+  - `test_auto_review_after_run`: `run` コマンド実行後に `auto_review=True` の場合に自動で `run_review` が呼ばれること。
+- *Validation*: `uv run pytest` を実行し、追加したテストが失敗することを確認。
 
-### Step 2: 状態検出および保存ロジックの実装 (TDD)
-- *Action*: `pdca_loop.py` に `detect_last_iteration` および `save_status` メソッドを追加。
-- *Red*: 状態検出や保存処理が正しく動作することを確認するテストコードを書き、失敗させる。
-- *Green*: ロジックを実装し、テストをパスさせる。
+### Step 2: パーサーおよび設定処理の拡張
+- *Action*: `tomoe/src/pdca_loop.py` の `build_parser` および `normalize_config` に新しいオプションを追加。
+  - `--auto-review`, `--review-llm-command`, `--persistence-template`, `--redteam-template`, `--synthesis-template`
+  - `review` サブコマンドの追加。
 
-### Step 3: `run_iterations` でのレジューム機能の実装 (TDD)
-- *Action*: `run_iterations` を最新イテレーション `last_n` から開始するよう修正。ログ表示を追加。
-- *Red*: すでに結果が存在する環境で `run` コマンドを実行した際、新しい連番で結果が生成されることを検証するテストを書き、失敗させる。
-- *Green*: `run_iterations` を修正し、テストをパスさせる。
-- *Refactor*: 不要なコードをクリーンアップ。
+### Step 3: `run_review` メソッドの実装 (TDD - Green Phase)
+- *Action*: `LoopRunner` に `run_review` を実装。
+  1. `eval_*.md` を検索して、履歴テキストを生成。
+  2. `args.target` および最新の `result_N.md` から最終成果物テキストを生成。
+  3. 各テンプレートをレンダリングし、`run_llm` でレビューを生成。
+  4. ファイルを `{workdir}` に書き出す。
+- *Validation*: `test_review_generation` がパスすることを確認。
+
+### Step 4: `run_iterations` での自動呼び出しの実装 (TDD - Green Phase)
+- *Action*: `run_iterations` の最後に `auto_review` が有効な場合、 `run_review` を呼び出すように変更。
+- *Validation*: `test_auto_review_after_run` がパスすることを確認。
+- *Refactor*: コードの整理、重複箇所の排除、テストが全て通ることを再確認。
 
 ---
 
 ## 4. 検証プラン (Verification Plan)
-- **自動テスト**: `uv run pytest pdca/tests` を実行し、すべてのテストがパスすることを確認。
+- **自動テスト**: `uv run pytest` を実行し、すべてのテストがパスすることを確認。
 - **手動確認**:
-  - `tomoe_test.sh` もしくは直接 `tomoe` を使って、
-    1. `tomoe all 3` を実行。 -> `result_0` から `result_3` が生成される。
-    2. `status.json` が生成され、内容が `current_loop: 3` になっていることを確認。
-    3. 追加で `tomoe run 2` を実行。
-    4. 開始ログに「X から Y まで継続する」旨が表示され、 `result_4`, `result_5` が正しく追加される（`result_3` は上書きされない）。
+  - `tomoe` を用いて、モックの LLM コマンドを指定した設定ファイル、またはコマンドライン引数で `tomoe all 2` を実行。
+  - イテレーション 2 終了後、自動的に `eval_persistence_review.md`、`fresh_red_team_review.md`、`next_move_synthesis.md` が生成されることを確認。
+  - `status.json` やコンソールログにレビューフェーズの実行が記録されていることを確認。
 
 ---
 
 ## 5. ガードレール (Guardrails for Coding Agent)
-- 今回の変更（レジューム処理）に関係のないコードの変更は行わない。
-- テストコードを必ず作成し、テスト駆動開発（TDD）のルールに従って開発を進める。
+- テスト駆動開発（TDD）の原則に従い、実装前にテストを書き、失敗することを確認してから実装を行う。
+- コミットメッセージにはバックティックを含めず、追加したテストケースの一覧を日本語で記載する。
+- 既存の PDCA ループ処理のコアロジックを破壊しないよう、慎重に変更を加える。
