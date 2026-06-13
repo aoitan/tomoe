@@ -25,6 +25,11 @@ def create_runner(tmp_path: Path, **kwargs) -> LoopRunner:
         stream_tool_output="none",
         git_checkpoint=False,
         git_commit=False,
+        auto_review=False,
+        review_llm_command=None,
+        persistence_template=None,
+        redteam_template=None,
+        synthesis_template=None,
     )
     for k, v in kwargs.items():
         setattr(args, k, v)

@@ -77,6 +77,85 @@ Exit code: {exit_code}
 """
 
 
+DEFAULT_PERSISTENCE_TEMPLATE = """# Iteration Persistence Review
+
+あなたは改善提案者ではなく、反復ログの観察者です。
+eval_n.md群を読み、各イテレーションで何が改善され、何が残り続けたかを分析してください。
+
+## 出力せよ
+
+1. 残り続けた問題
+- 複数回出現した問題だけを書く
+- 一度だけの問題は原則除外する
+
+2. 偽改善
+- 表面上は改善したが、別の形で再発している問題を書く
+
+3. 問題の型
+- prompt不足
+- 中間成果物不足
+- 入力情報不足
+- 評価軸不足
+- タスク分割不足
+- モデル能力不足
+- 実行制約
+などに分類する
+
+4. 構造的な解決策
+- プロンプト修正ではなく、フェーズ追加・中間成果物追加・評価軸追加・入力形式変更として提案する
+
+5. 次に試す最小変更
+- 1つだけ選ぶ
+"""
+
+
+DEFAULT_REDTEAM_TEMPLATE = """# Fresh Red-Team Review
+
+あなたはこの成果物を初めて読む外部レビュアーです。
+イテレーション履歴や作成過程は一切考慮しないでください。
+成果物だけを読み、実用上の欠陥を指摘してください。
+
+## 観点
+
+1. この成果物は何に使えるか
+2. 使うには何が足りないか
+3. 根拠が弱い主張はどこか
+4. 抽象的すぎる箇所はどこか
+5. 重要なのに欠けている情報は何か
+6. 読者が次に行動できるか
+7. 全体として、採用・保留・破棄のどれか
+
+## 禁止
+
+- 作成者の努力を評価しない
+- 改善履歴を推測しない
+- ふわっとした褒め言葉を書かない
+- 「より詳細に」だけの提案をしない
+"""
+
+
+DEFAULT_SYNTHESIS_TEMPLATE = """# Next Move Synthesis
+
+## 入力
+- eval_persistence_review.md
+- fresh_red_team_review.md
+
+## 判断
+
+1. 両方が指摘した問題
+→ 最優先で直す
+
+2. eval側だけが指摘した問題
+→ 慢性問題。仕組みで直す
+
+3. red-team側だけが指摘した問題
+→ 初見品質問題。成果物の見せ方や前提説明を直す
+
+4. どちらにも出ていないが人間が気にしている問題
+→ まだ評価できていない可能性がある
+"""
+
+
 def main() -> int:
     start_time = dt.datetime.now()
     config_path, config = load_config(sys.argv[1:])
@@ -101,6 +180,8 @@ def main() -> int:
             runner.run_iterations(args.iterations)
         elif args.command == "step":
             runner.run_step(args.n)
+        elif args.command == "review":
+            runner.run_review()
         else:
             parser.error(f"unknown command: {args.command}")
     finally:
@@ -236,6 +317,35 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
         default=config.get("git_commit", True),
         help="Automatically commit target/artifact changes after modify phase if not already committed.",
     )
+    parser.add_argument(
+        "--auto-review",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("auto_review", True),
+        help="Automatically run overall review phase after the iterations finish.",
+    )
+    parser.add_argument(
+        "--review-llm-command",
+        default=config.get("review_llm_command"),
+        help="LLM CLI command for the overall review phase. Defaults to --llm-command.",
+    )
+    parser.add_argument(
+        "--persistence-template",
+        type=Path,
+        default=config.get("persistence_template"),
+        help="Markdown template for persistence review. Supports {project_description}, {project_goal}, {eval_history}.",
+    )
+    parser.add_argument(
+        "--redteam-template",
+        type=Path,
+        default=config.get("redteam_template"),
+        help="Markdown template for fresh red-team review.",
+    )
+    parser.add_argument(
+        "--synthesis-template",
+        type=Path,
+        default=config.get("synthesis_template"),
+        help="Markdown template for next move synthesis.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("init", help="Run the current tool and save result_0.md.")
@@ -260,6 +370,8 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
 
     step_parser = subparsers.add_parser("step", help="Run one specific iteration number.")
     step_parser.add_argument("n", type=positive_int)
+
+    review_parser = subparsers.add_parser("review", help="Run iteration persistence, red-team and synthesis reviews.")
     return parser
 
 
@@ -272,6 +384,8 @@ def positive_int(raw: str) -> int:
 
 def validate_llm_commands(args: argparse.Namespace) -> None:
     if args.llm_command is not None:
+        return
+    if args.command == "review" and args.review_llm_command is not None:
         return
     if args.eval_llm_command is not None and args.modify_llm_command is not None:
         return
@@ -318,7 +432,7 @@ def normalize_config(raw_config: dict[str, object], base_dir: Path) -> dict[str,
             )
             config["result_include"].extend(include_files)
 
-    path_keys = {"workdir", "target", "eval_template", "modify_template"}
+    path_keys = {"workdir", "target", "eval_template", "modify_template", "persistence_template", "redteam_template", "synthesis_template"}
     for key in path_keys:
         if key in config and config[key] is not None:
             config[key] = resolve_config_path(Path(str(config[key])), base_dir)
@@ -401,6 +515,9 @@ class LoopRunner:
         self.log(f"[run] resuming from iter {start_n} to {end_n}")
         for n in range(start_n, end_n + 1):
             self.run_step(n)
+
+        if self.args.auto_review:
+            self.run_review()
 
     def run_step(self, n: int) -> None:
         start_step_time = dt.datetime.now()
@@ -636,6 +753,87 @@ class LoopRunner:
         if command is None:
             raise SystemExit("--modify-llm-command or --llm-command is required")
         return command
+
+    def review_llm_command(self) -> str:
+        command = self.args.review_llm_command or self.args.llm_command
+        if command is None:
+            raise SystemExit("--review-llm-command or --llm-command is required")
+        return command
+
+    def run_review(self) -> None:
+        self.log("[review] starting overall review phase")
+
+        # 1. Iteration Persistence Review
+        eval_files = sorted(
+            list(self.workdir.glob("eval_*.md")),
+            key=lambda p: int(re.search(r"\d+", p.name).group()) if re.search(r"\d+", p.name) else 0
+        )
+        if not eval_files:
+            self.log("[review] warning: no eval_*.md files found in workdir, skipping persistence review")
+            eval_history = "(No evaluation history found)"
+        else:
+            history_blocks = []
+            for f in eval_files:
+                iter_num = re.search(r"\d+", f.name).group() if re.search(r"\d+", f.name) else "unknown"
+                history_blocks.append(f"# Iteration {iter_num} Evaluation\n{f.read_text(encoding='utf-8')}")
+            eval_history = "\n\n".join(history_blocks)
+
+        persistence_prompt_tmpl = read_template(
+            self.args.persistence_template,
+            DEFAULT_PERSISTENCE_TEMPLATE
+        )
+        persistence_prompt = f"{persistence_prompt_tmpl}\n\n---\n以下は各イテレーションの評価ログです。\n\n{eval_history}"
+        
+        self.log("[review] generating eval_persistence_review.md")
+        persistence_review = self.run_llm(persistence_prompt, self.review_llm_command())
+        persistence_path = self.workdir / "eval_persistence_review.md"
+        persistence_path.write_text(persistence_review, encoding="utf-8")
+
+        # 2. Fresh Red-Team Review
+        target_content = "(No target file specified or target file does not exist)"
+        if self.args.target is not None and self.args.target.exists() and self.args.target.is_file():
+            target_content = self.args.target.read_text(encoding="utf-8")
+        
+        last_n = self.detect_last_iteration()
+        result_path = self.result_path(last_n)
+        result_content = "(No execution result found)"
+        if result_path.exists():
+            result_content = result_path.read_text(encoding="utf-8")
+
+        redteam_prompt_tmpl = read_template(
+            self.args.redteam_template,
+            DEFAULT_REDTEAM_TEMPLATE
+        )
+        
+        target_name = self.args.target.name if self.args.target else "target"
+        redteam_prompt = (
+            f"{redteam_prompt_tmpl}\n\n---\n以下は最終成果物です。\n\n"
+            f"# ターゲットファイル ({target_name})\n{target_content}\n\n"
+            f"# 最終実行結果 (result_{last_n}.md)\n{result_content}"
+        )
+        
+        self.log("[review] generating fresh_red_team_review.md")
+        redteam_review = self.run_llm(redteam_prompt, self.review_llm_command())
+        redteam_path = self.workdir / "fresh_red_team_review.md"
+        redteam_path.write_text(redteam_review, encoding="utf-8")
+
+        # 3. Next Move Synthesis
+        synthesis_prompt_tmpl = read_template(
+            self.args.synthesis_template,
+            DEFAULT_SYNTHESIS_TEMPLATE
+        )
+        synthesis_prompt = (
+            f"{synthesis_prompt_tmpl}\n\n---\n以下は分析結果です。\n\n"
+            f"# Iteration Persistence Review\n{persistence_review}\n\n"
+            f"# Fresh Red-Team Review\n{redteam_review}"
+        )
+        
+        self.log("[review] generating next_move_synthesis.md")
+        synthesis_review = self.run_llm(synthesis_prompt, self.review_llm_command())
+        synthesis_path = self.workdir / "next_move_synthesis.md"
+        synthesis_path.write_text(synthesis_review, encoding="utf-8")
+        
+        self.log("[review] overall review phase completed")
 
     def apply_modify_output(self, modify_output: str) -> None:
         if self.args.modify_mode == "direct-edit":
