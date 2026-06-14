@@ -12,3 +12,4 @@ runs/
 # Local config
 tomoe.local.toml
 test_template/
+build/
