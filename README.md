@@ -173,6 +173,8 @@ iter_n/
 
 ## オプション
 
+- `--config`: TOML configを読み込む。CLI引数はconfigより優先する
+- `--workdir`: 結果やスナップショット、評価等の各イテレーションファイルが書き出されるディレクトリ（デフォルト: `runs`）
 - `--tool-command`: 現在のツールを実行するコマンド
 - `--llm-command`: 評価と修正で共通利用するLLM CLI
 - `--eval-llm-command`: 評価フェーズ用LLM CLI。未指定なら `--llm-command` を使う
@@ -180,11 +182,20 @@ iter_n/
 - `--target`: Modifyフェーズで上書きするコードまたはプロンプト
 - `--artifact`: `iter_n/` に追加で保存するファイル。複数指定可能
 - `--result-artifact`: stdout以外に評価したいツール出力。`result_n.md` へ埋め込み、`iter_n/` にも保存する。複数指定可能
-- `--extract-code-block`: LLM出力から fenced code block だけを取り出して `--target` に保存する
+- `--project-description`: プロジェクトの概要説明テキスト（プロンプトテンプレートに挿入される）
+- `--project-goal`: プロジェクトの達成目標テキスト（プロンプトテンプレートに挿入される）
 - `--eval-template`: 評価用mdテンプレート
 - `--modify-template`: 修正用mdテンプレート
+- `--extract-code-block`: LLM出力から fenced code block だけを取り出して `--target` に保存する
 - `--keep-modify-output`: LLMの修正出力全文を `modify_n.md` として残す
 - `--modify-mode`: `overwrite-target` はLLM出力で単一ファイルを上書きする。`direct-edit` はLLM CLIが直接編集した変更をそのまま使う
 - `--stream-tool-output`: 長時間実行中のツール出力を画面にも流す。`none` / `stderr` / `stdout` / `both`
 - `--git-checkpoint`: 各Modify前後のGitコミットハッシュ、status、diffを `iter_n/` に保存する
-- `--config`: TOML configを読み込む。CLI引数はconfigより優先する
+- `--git-commit`: 修正フェーズの後に変更を自動コミットする。デフォルト: `true`
+- `--early-stop`: 評価結果の改善点に「なし」などのキーワードが検出された場合にループを早期終了する。デフォルト: `false`
+- `--auto-review`: イテレーション完了時に自動で全体のレビュー（Persistence, Red-Team, Synthesis）を実行する。デフォルト: `true`
+- `--review-llm-command`: レビューフェーズ用LLM CLI。未指定なら `--llm-command` を使う
+- `--persistence-template`: 継続性（Persistence）評価用のmdテンプレート
+- `--redteam-template`: Red-Team レビュー評価用のmdテンプレート
+- `--synthesis-template`: レビュー合成（Synthesis）評価用のmdテンプレート
+
