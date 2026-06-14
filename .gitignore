@@ -13,3 +13,4 @@ runs/
 tomoe.local.toml
 test_template/
 build/
+.pytest_cache/
