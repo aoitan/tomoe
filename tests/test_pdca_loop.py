@@ -25,6 +25,7 @@ def create_runner(tmp_path: Path, **kwargs) -> LoopRunner:
         stream_tool_output="none",
         git_checkpoint=False,
         git_commit=False,
+        early_stop=False,
         auto_review=False,
         review_llm_command=None,
         persistence_template=None,
@@ -423,6 +424,71 @@ def test_get_git_changes_uncommitted(tmp_path: Path, monkeypatch):
     assert "変更差分 (git diff)" in redteam_call_prompt
     assert "修正ファイルリスト" in redteam_call_prompt
     assert "print('hello modified uncommitted')" in redteam_call_prompt
+
+
+def test_check_early_stop(tmp_path: Path):
+    runner = create_runner(tmp_path, early_stop=True)
+    
+    eval_text_1 = """
+- 今回ただ一つ直す改善点:
+  - なし
+"""
+    assert runner.check_early_stop(eval_text_1) is True
+
+    eval_text_2 = """
+- 今回ただ一つ直す改善点: なし
+"""
+    assert runner.check_early_stop(eval_text_2) is True
+
+    eval_text_3 = """
+- 今回ただ一つ直す改善点:
+  - NONE
+"""
+    assert runner.check_early_stop(eval_text_3) is True
+
+    eval_text_4 = """
+- 今回ただ一つ直す改善点:
+  - ファイルの入出力処理でエラーが発生しないようにする
+"""
+    assert runner.check_early_stop(eval_text_4) is False
+
+    eval_text_5 = """
+- 今回ただ一つ直す改善点:
+  - 「なし」という文字が含まれるが、実際にはバグを修正する
+"""
+    assert runner.check_early_stop(eval_text_5) is False
+
+
+def test_run_step_early_stop(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("dummy result", encoding="utf-8")
+    (tmp_path / "target.py").write_text("print('hello')", encoding="utf-8")
+    
+    runner = create_runner(tmp_path, early_stop=True)
+    runner.run_llm = MagicMock(return_value="""
+- 今回ただ一つ直す改善点:
+  - なし
+""")
+    runner.apply_modify_output = MagicMock()
+    runner.run_tool = MagicMock()
+    
+    should_continue = runner.run_step(1)
+    
+    assert should_continue is False
+    assert (tmp_path / "eval_1.md").exists()
+    runner.apply_modify_output.assert_not_called()
+    runner.run_tool.assert_not_called()
+
+
+def test_run_iterations_early_stop(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("dummy result", encoding="utf-8")
+    
+    runner = create_runner(tmp_path, early_stop=True)
+    runner.run_step = MagicMock(return_value=False)
+    
+    runner.run_iterations(3)
+    runner.run_step.assert_called_once_with(1)
 
 
 

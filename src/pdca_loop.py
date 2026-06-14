@@ -49,6 +49,7 @@ DEFAULT_EVAL_TEMPLATE = """# プロジェクトの説明
 # 指示
 前回の実験結果がプロジェクトの目的を満たせている部分と満たせていない部分を評価してください。
 そのうえで、このループで直す改善点を必ず一つだけ選んでください。
+すでにプロジェクトのゴールを完全に満たしており、これ以上修正すべき点がないと判断した場合は、「なし」と出力してください。
 
 出力形式:
 - 維持すべき項目:
@@ -340,6 +341,12 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
         help="Automatically commit target/artifact changes after modify phase if not already committed.",
     )
     parser.add_argument(
+        "--early-stop",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("early_stop", False),
+        help="Stop the loop early if the evaluation result indicates no further improvement is needed.",
+    )
+    parser.add_argument(
         "--auto-review",
         action=argparse.BooleanOptionalAction,
         default=config.get("auto_review", True),
@@ -536,12 +543,14 @@ class LoopRunner:
         end_n = last_n + iterations
         self.log(f"[run] resuming from iter {start_n} to {end_n}")
         for n in range(start_n, end_n + 1):
-            self.run_step(n)
+            should_continue = self.run_step(n)
+            if not should_continue:
+                break
 
         if self.args.auto_review:
             self.run_review()
 
-    def run_step(self, n: int) -> None:
+    def run_step(self, n: int) -> bool:
         start_step_time = dt.datetime.now()
         self.ensure_initialized()
         self.ensure_target()
@@ -572,6 +581,17 @@ class LoopRunner:
             last_eval=eval_path.name,
             last_modify=None,
         )
+
+        if self.args.early_stop and self.check_early_stop(evaluation):
+            self.log(f"[iter {n}] early stop triggered: no further improvement needed")
+            self.save_status(
+                loop_num=n,
+                status="ready",
+                last_result=previous_result_path.name,
+                last_eval=eval_path.name,
+                last_modify=None,
+            )
+            return False
 
         self.log(f"[iter {n}] snapshotting inputs")
         snapshot_dir = self.snapshot(n, previous_result_path, eval_path)
@@ -620,6 +640,7 @@ class LoopRunner:
             last_modify=modify_path_val,
         )
         self.step_durations.append((dt.datetime.now() - start_step_time).total_seconds())
+        return True
 
     def ensure_initialized(self) -> None:
         if not self.result_path(0).exists():
@@ -998,6 +1019,35 @@ class LoopRunner:
         diff_text = completed_diff.stdout if completed_diff.returncode == 0 else ""
         status_text = completed_status.stdout if completed_status.returncode == 0 else ""
         return diff_text, status_text
+
+    def check_early_stop(self, evaluation: str) -> bool:
+        pattern = r"(?:今回ただ一つ直す改善点|改善点)\s*:\s*(.*)"
+        match = re.search(pattern, evaluation)
+        if not match:
+            return False
+            
+        # 1. Check immediate value after the colon
+        immediate_val = match.group(1).split("\n")[0].strip().lower()
+        cleaned_immediate = re.sub(r"^[-*+\s#:]+", "", immediate_val).strip()
+        cleaned_immediate = re.sub(r"[()（）'\"`]+", "", cleaned_immediate).strip()
+        
+        stop_keywords = ["なし", "none", "n/a", "特になし", "nothing"]
+        if cleaned_immediate in stop_keywords:
+            return True
+            
+        # 2. Check subsequent lines for bullet points
+        start_idx = match.start()
+        lines = [line.strip().lower() for line in evaluation[start_idx:].split("\n")]
+        
+        for line in lines[:4]:
+            if ":" in line:
+                line = line.split(":", 1)[1]
+            cleaned = re.sub(r"^[-*+\s#:]+", "", line).strip()
+            cleaned = re.sub(r"[()（）'\"`]+", "", cleaned).strip()
+            if cleaned in stop_keywords:
+                return True
+                
+        return False
 
     def extract_target_text(self, modify_output: str) -> str:
         language = self.args.extract_code_block
