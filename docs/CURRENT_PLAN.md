@@ -9,8 +9,10 @@ PDCAループを実行する中での評価（eval）フェーズにおいて、
    - ブロッキング課題がある場合は探索的な改善を一時中断し、その不具合の修正を最優先にするよう指示する。
    - `DEFAULT_MODIFY_TEMPLATE` を更新し、ブロッキング課題が指摘されている場合は他の不要な探索・変更を行わず、その不具合の解消のみにフォーカスするよう指示する。
    - `tomoe/example/eval_template.md` と `tomoe/example/modify_template.md` についても、上記と同様の不具合検出時の優先指示を反映する。
+   - `tomoe/example` ディレクトリに、レビューフェーズ用の他のテンプレート（`persistence_template.md`, `redteam_template.md`, `synthesis_template.md`）のサンプルを作成する。
+   - `tomoe/example/tomoe.toml` に、これらのテンプレート設定例を追加する。
 2. **プログラムでのエラー一時停止オプションの追加**:
-   - `--stop-on-error` (TOML: `stop_on_error`, デフォルト: `false`) オプションを追加する。
+   - `--stop-on-error` (TOML: `stop_on_error`, デフォルト: `false`) オプションを追加する.
    - このオプションが `true` の場合、`run_tool` の実行（テスト実行やプログラム実行）が非ゼロコードで終了した（エラーが発生した）際、ループをその時点で中断し、不具合の修正を促して停止する。
 
 ---
@@ -22,12 +24,14 @@ PDCAループを実行する中での評価（eval）フェーズにおいて、
   - `build_parser` および `normalize_config` に `--stop-on-error` / `stop_on_error` オプションの追加。
   - `LoopRunner` に `last_tool_exit_code` 属性を追加し、`run_tool` で保存する。
   - `run_step` および `run_iterations` の制御ロジックを修正し、`stop_on_error` が有効かつツール実行でエラー（exit_code != 0）が発生した場合に処理を中断するようにする。
-- `tomoe/example/` 内のテンプレートファイルの修正:
+- `tomoe/example/` 内のテンプレート・設定ファイルの追加・修正:
   - `eval_template.md` と `modify_template.md` の改訂。
+  - `persistence_template.md`, `redteam_template.md`, `synthesis_template.md` の新規作成。
+  - `tomoe.toml` への設定例の追記。
 - `tomoe/tests/test_pdca_loop.py` の修正:
   - 新しいプロンプトテンプレートの内容を検証するテストの追加。
   - `--stop-on-error` オプションが有効な時にエラーでループが中断されることを検証するテストの追加。
-  - `example/` 内のテンプレートファイルの内容を検証するテストの追加。
+  - `example/` 内の各種テンプレートファイルおよび `tomoe.toml` の設定例を検証するテストの追加。
 
 ### ⛔ Non-Goals (やらないこと/スコープ外)
 - `synthesis` や `redteam` など、他のレビューテンプレートの文言変更（今回のイテレーション内の eval/modify に直接関係しないため）。

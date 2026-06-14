@@ -12,6 +12,11 @@ target = "../../isohyps/isohyps/project_analysis.py"
 
 eval_template = "./eval_template.md"
 modify_template = "./modify_template.md"
+# persistence_template = "./persistence_template.md"
+# redteam_template = "./redteam_template.md"
+# synthesis_template = "./synthesis_template.md"
+# review_llm_command = "codex exec"
+# auto_review = true
 
 keep_modify_output = true
 result_artifacts = ["../../isohyps/analysis_docs"]

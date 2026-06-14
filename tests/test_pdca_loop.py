@@ -543,6 +543,24 @@ def test_example_templates_contain_blocking_instructions():
     assert "ブロッキング" in modify_content or "不具合" in modify_content
 
 
+def test_example_review_templates_exist():
+    persistence_tmpl = Path("example/persistence_template.md")
+    redteam_tmpl = Path("example/redteam_template.md")
+    synthesis_tmpl = Path("example/synthesis_template.md")
+    config_file = Path("example/tomoe.toml")
+    
+    assert persistence_tmpl.exists()
+    assert redteam_tmpl.exists()
+    assert synthesis_tmpl.exists()
+    assert config_file.exists()
+    
+    config_content = config_file.read_text(encoding="utf-8")
+    assert "persistence_template" in config_content
+    assert "redteam_template" in config_content
+    assert "synthesis_template" in config_content
+
+
+
 
 
 
