@@ -47,14 +47,24 @@ DEFAULT_EVAL_TEMPLATE = """# プロジェクトの説明
 {result}
 
 # 指示
-前回の実験結果がプロジェクトの目的を満たせている部分と満たせていない部分を評価してください。
+前回の実験結果について、以下の2つの観点で評価を行ってください。
+
+1. 実行エラー・致命的な不具合（ブロッキング課題）の有無：
+   - コンパイルエラー、テスト失敗、クラッシュ、アサーションエラー、未定義動作など、次の探索ステップを阻害する明らかな不具合があるか確認してください。
+   - もしブロッキング課題が存在する場合、最優先でその不具合の修正を指示し、探索的な改善（新しいアイデアの試行など）は一時中断してください。
+
+2. 目的達成のための探索課題：
+   - ブロッキング課題がない場合、プロジェクトのゴールに対して何が満たせており、何が満たせていないか、さらに改善できる探索課題を評価してください。
+
 そのうえで、このループで直す改善点を必ず一つだけ選んでください。
 すでにプロジェクトのゴールを完全に満たしており、これ以上修正すべき点がないと判断した場合は、「なし」と出力してください。
 
 出力形式:
 - 維持すべき項目:
   - ...
-- 満たせていない項目:
+- 満たせていない項目（探索課題）:
+  - ...
+- 致命的な不具合・ブロッキング課題（あれば）:
   - ...
 - 今回ただ一つ直す改善点:
   - ...
@@ -75,6 +85,8 @@ DEFAULT_MODIFY_TEMPLATE = """# プロジェクトの説明
 
 # 指示
 前回の実験結果と評価をもとに、「今回ただ一つ直す改善点」だけを改善する修正を行ってください。
+
+※重要：評価の中に「致命的な不具合・ブロッキング課題」が挙げられている場合は、新しいアイデアの適用や探索的な追加は行わず、その不具合を解消するための最小限の修正のみを行ってください。
 複数の改善、便乗リファクタ、無関係な整理は行わないでください。
 """
 
@@ -347,6 +359,12 @@ def build_parser(config: dict[str, object] | None = None) -> argparse.ArgumentPa
         help="Stop the loop early if the evaluation result indicates no further improvement is needed.",
     )
     parser.add_argument(
+        "--stop-on-error",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("stop_on_error", False),
+        help="Stop the loop early if the tool command fails (non-zero exit code).",
+    )
+    parser.add_argument(
         "--auto-review",
         action=argparse.BooleanOptionalAction,
         default=config.get("auto_review", True),
@@ -521,6 +539,7 @@ class LoopRunner:
         self.args = args
         self.workdir = args.workdir
         self.step_durations: list[float] = []
+        self.last_tool_exit_code = 0
 
     def initialize(self) -> None:
         self.workdir.mkdir(parents=True, exist_ok=True)
@@ -640,6 +659,11 @@ class LoopRunner:
             last_modify=modify_path_val,
         )
         self.step_durations.append((dt.datetime.now() - start_step_time).total_seconds())
+        
+        if self.args.stop_on_error and self.last_tool_exit_code != 0:
+            self.log(f"[iter {n}] stop on error triggered: tool command failed with exit code {self.last_tool_exit_code}")
+            return False
+            
         return True
 
     def ensure_initialized(self) -> None:
@@ -740,6 +764,7 @@ class LoopRunner:
         stdout_thread.start()
         stderr_thread.start()
         exit_code = process.wait()
+        self.last_tool_exit_code = exit_code
         stdout_thread.join()
         stderr_thread.join()
 

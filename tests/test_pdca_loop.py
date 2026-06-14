@@ -26,6 +26,7 @@ def create_runner(tmp_path: Path, **kwargs) -> LoopRunner:
         git_checkpoint=False,
         git_commit=False,
         early_stop=False,
+        stop_on_error=False,
         auto_review=False,
         review_llm_command=None,
         persistence_template=None,
@@ -489,6 +490,44 @@ def test_run_iterations_early_stop(tmp_path: Path):
     
     runner.run_iterations(3)
     runner.run_step.assert_called_once_with(1)
+
+
+def test_default_templates_contain_blocking_instructions():
+    from pdca_loop import DEFAULT_EVAL_TEMPLATE, DEFAULT_MODIFY_TEMPLATE
+    assert "ブロッキング" in DEFAULT_EVAL_TEMPLATE or "不具合" in DEFAULT_EVAL_TEMPLATE
+    assert "探索" in DEFAULT_EVAL_TEMPLATE
+    assert "ブロッキング" in DEFAULT_MODIFY_TEMPLATE or "不具合" in DEFAULT_MODIFY_TEMPLATE
+
+
+def test_stop_on_error_stops_loop(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("res0", encoding="utf-8")
+    (tmp_path / "target.py").write_text("print('hello')", encoding="utf-8")
+    
+    runner = create_runner(tmp_path, target=tmp_path / "target.py", stop_on_error=True)
+    
+    def mock_run_tool():
+        runner.last_tool_exit_code = 1
+        return "error output"
+    runner.run_tool = mock_run_tool
+    
+    runner.run_llm = MagicMock(return_value="llm response")
+    runner.apply_modify_output = MagicMock()
+    
+    should_continue = runner.run_step(1)
+    assert should_continue is False
+    
+    # Test that run_iterations breaks early when run_step returns False
+    sub_path = tmp_path / "iter_test"
+    sub_path.mkdir()
+    (sub_path / "result_0.md").write_text("res0", encoding="utf-8")
+    (sub_path / "target.py").write_text("print('hello')", encoding="utf-8")
+    
+    runner_iter = create_runner(sub_path, target=sub_path / "target.py", stop_on_error=True)
+    runner_iter.run_step = MagicMock(return_value=False)
+    runner_iter.run_iterations(3)
+    runner_iter.run_step.assert_called_once_with(1)
+
 
 
 
