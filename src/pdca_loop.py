@@ -13,6 +13,28 @@ import sys
 import threading
 import tomllib
 from pathlib import Path
+import string
+
+
+class SafeFormatter(string.Formatter):
+    def vformat(self, format_string: str, args: tuple, kwargs: dict) -> str:
+        result = []
+        for literal_text, field_name, format_spec, conversion in self.parse(format_string):
+            if literal_text:
+                result.append(literal_text)
+            if field_name is not None:
+                try:
+                    obj, _ = self.get_field(field_name, args, kwargs)
+                    formatted = self.format_field(obj, format_spec)
+                    if conversion:
+                        formatted = self.convert_field(formatted, conversion)
+                    result.append(formatted)
+                except (KeyError, IndexError, ValueError, AttributeError):
+                    spec = f":{format_spec}" if format_spec else ""
+                    conv = f"!{conversion}" if conversion else ""
+                    result.append(f"{{{field_name}{conv}{spec}}}")
+        return "".join(result)
+
 
 
 DEFAULT_EVAL_TEMPLATE = """# プロジェクトの説明
@@ -647,7 +669,8 @@ class LoopRunner:
 
     def render_eval_prompt(self, result: str) -> str:
         template = read_template(self.args.eval_template, DEFAULT_EVAL_TEMPLATE)
-        return template.format(
+        return SafeFormatter().format(
+            template,
             project_description=self.args.project_description,
             project_goal=self.args.project_goal,
             result=result,
@@ -655,12 +678,14 @@ class LoopRunner:
 
     def render_modify_prompt(self, result: str, evaluation: str) -> str:
         template = read_template(self.args.modify_template, DEFAULT_MODIFY_TEMPLATE)
-        return template.format(
+        return SafeFormatter().format(
+            template,
             project_description=self.args.project_description,
             project_goal=self.args.project_goal,
             result=result,
             evaluation=evaluation,
         )
+
 
     def run_tool(self) -> str:
         process = subprocess.Popen(

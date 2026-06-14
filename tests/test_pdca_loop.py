@@ -300,3 +300,40 @@ def test_auto_review_after_run(tmp_path: Path):
     runner_no_review.run_iterations(1)
     runner_no_review.run_review.assert_not_called()
 
+
+def test_safe_formatter_eval_modify_prompt(tmp_path: Path):
+    eval_template_file = tmp_path / "eval_template.md"
+    eval_template_file.write_text(
+        "desc: {project_description}\ngoal: {project_goal}\nresult: {result}\nunknown: {検証対象バージョン / コミットハッシュ}\nescaped: {{escaped}}",
+        encoding="utf-8"
+    )
+    
+    modify_template_file = tmp_path / "modify_template.md"
+    modify_template_file.write_text(
+        "desc: {project_description}\ngoal: {project_goal}\nresult: {result}\neval: {evaluation}\nunknown: {別の未知のキー}",
+        encoding="utf-8"
+    )
+    
+    runner = create_runner(
+        tmp_path,
+        eval_template=eval_template_file,
+        modify_template=modify_template_file,
+        project_description="my desc",
+        project_goal="my goal"
+    )
+    
+    eval_prompt = runner.render_eval_prompt("my result")
+    assert "desc: my desc" in eval_prompt
+    assert "goal: my goal" in eval_prompt
+    assert "result: my result" in eval_prompt
+    assert "unknown: {検証対象バージョン / コミットハッシュ}" in eval_prompt
+    assert "escaped: {escaped}" in eval_prompt
+    
+    modify_prompt = runner.render_modify_prompt("my result", "my eval")
+    assert "desc: my desc" in modify_prompt
+    assert "goal: my goal" in modify_prompt
+    assert "result: my result" in modify_prompt
+    assert "eval: my eval" in modify_prompt
+    assert "unknown: {別の未知のキー}" in modify_prompt
+
+
