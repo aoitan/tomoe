@@ -529,6 +529,21 @@ def test_stop_on_error_stops_loop(tmp_path: Path):
     runner_iter.run_step.assert_called_once_with(1)
 
 
+def test_example_templates_contain_blocking_instructions():
+    eval_tmpl = Path("example/eval_template.md")
+    modify_tmpl = Path("example/modify_template.md")
+    
+    assert eval_tmpl.exists()
+    assert modify_tmpl.exists()
+    
+    eval_content = eval_tmpl.read_text(encoding="utf-8")
+    modify_content = modify_tmpl.read_text(encoding="utf-8")
+    
+    assert "ブロッキング" in eval_content or "不具合" in eval_content
+    assert "ブロッキング" in modify_content or "不具合" in modify_content
+
+
+
 
 
 
