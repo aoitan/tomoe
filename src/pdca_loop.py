@@ -825,6 +825,15 @@ class LoopRunner:
         if result_path.exists():
             result_content = result_path.read_text(encoding="utf-8")
 
+        git_diff_section = ""
+        if self.args.modify_mode == "direct-edit":
+            diff_text, status_text = self.get_git_changes(last_n)
+            if diff_text or status_text:
+                git_diff_section = (
+                    f"# 修正ファイルリスト\n{status_text}\n\n"
+                    f"# 変更差分 (git diff)\n```diff\n{diff_text}\n```\n\n"
+                )
+
         redteam_prompt_tmpl = read_template(
             self.args.redteam_template,
             DEFAULT_REDTEAM_TEMPLATE
@@ -833,6 +842,7 @@ class LoopRunner:
         target_name = self.args.target.name if self.args.target else "target"
         redteam_prompt = (
             f"{redteam_prompt_tmpl}\n\n---\n以下は最終成果物です。\n\n"
+            f"{git_diff_section}"
             f"# ターゲットファイル ({target_name})\n{target_content}\n\n"
             f"# 最終実行結果 (result_{last_n}.md)\n{result_content}"
         )
@@ -944,6 +954,50 @@ class LoopRunner:
                     f"stdout: {completed_commit.stdout}\n"
                     f"stderr: {completed_commit.stderr}"
                 )
+
+    def get_git_changes(self, last_n: int) -> tuple[str, str]:
+        completed_msg = subprocess.run(
+            ["git", "log", "-n", "1", "--format=%s"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed_msg.returncode != 0:
+            return "", ""
+            
+        commit_msg = completed_msg.stdout.strip()
+        expected_msg = f"pdca: iteration {last_n} modify"
+        
+        if commit_msg == expected_msg:
+            completed_diff = subprocess.run(
+                ["git", "diff", "HEAD~1", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            completed_status = subprocess.run(
+                ["git", "diff", "--name-status", "HEAD~1", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        else:
+            completed_diff = subprocess.run(
+                ["git", "diff", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            completed_status = subprocess.run(
+                ["git", "status", "--short"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            
+        diff_text = completed_diff.stdout if completed_diff.returncode == 0 else ""
+        status_text = completed_status.stdout if completed_status.returncode == 0 else ""
+        return diff_text, status_text
 
     def extract_target_text(self, modify_output: str) -> str:
         language = self.args.extract_code_block

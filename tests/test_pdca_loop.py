@@ -337,3 +337,93 @@ def test_safe_formatter_eval_modify_prompt(tmp_path: Path):
     assert "unknown: {別の未知のキー}" in modify_prompt
 
 
+def test_get_git_changes_committed(tmp_path: Path, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    
+    target_file = tmp_path / "target.py"
+    target_file.write_text("print('hello')", encoding="utf-8")
+    subprocess.run(["git", "add", "target.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+    
+    target_file.write_text("print('hello modified committed')", encoding="utf-8")
+    subprocess.run(["git", "add", "target.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "pdca: iteration 1 modify"], cwd=tmp_path, check=True)
+    
+    # status.json を作成して detect_last_iteration() が 1 を返すようにする
+    status_file = tmp_path / "status.json"
+    status_file.write_text('{"current_loop": 1, "last_result": "result_1.md", "status": "ready"}', encoding="utf-8")
+    
+    result_file = tmp_path / "result_1.md"
+    result_file.write_text("dummy result", encoding="utf-8")
+    eval_file = tmp_path / "eval_1.md"
+    eval_file.write_text("dummy eval", encoding="utf-8")
+    
+    monkeypatch.chdir(tmp_path)
+    runner = create_runner(tmp_path, target=Path("target.py"), modify_mode="direct-edit", review_llm_command="mock_llm")
+    runner.run_llm = MagicMock(return_value="review response")
+    
+    diff_text, status_text = runner.get_git_changes(1)
+    
+    assert "print('hello modified committed')" in diff_text
+    assert "target.py" in status_text
+    
+    runner.run_review()
+    
+    calls = runner.run_llm.call_args_list
+    assert len(calls) >= 2
+    redteam_call_prompt = calls[1][0][0]
+    
+    assert "変更差分 (git diff)" in redteam_call_prompt
+    assert "修正ファイルリスト" in redteam_call_prompt
+    assert "print('hello modified committed')" in redteam_call_prompt
+
+
+def test_get_git_changes_uncommitted(tmp_path: Path, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    
+    target_file = tmp_path / "target.py"
+    target_file.write_text("print('hello')", encoding="utf-8")
+    subprocess.run(["git", "add", "target.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+    
+    target_file.write_text("print('hello modified uncommitted')", encoding="utf-8")
+    
+    # status.json を作成
+    status_file = tmp_path / "status.json"
+    status_file.write_text('{"current_loop": 1, "last_result": "result_1.md", "status": "ready"}', encoding="utf-8")
+    
+    result_file = tmp_path / "result_1.md"
+    result_file.write_text("dummy result", encoding="utf-8")
+    eval_file = tmp_path / "eval_1.md"
+    eval_file.write_text("dummy eval", encoding="utf-8")
+    
+    monkeypatch.chdir(tmp_path)
+    runner = create_runner(tmp_path, target=Path("target.py"), modify_mode="direct-edit", review_llm_command="mock_llm")
+    runner.run_llm = MagicMock(return_value="review response")
+    
+    diff_text, status_text = runner.get_git_changes(1)
+    
+    assert "print('hello modified uncommitted')" in diff_text
+    assert "target.py" in status_text
+    
+    runner.run_review()
+    
+    calls = runner.run_llm.call_args_list
+    assert len(calls) >= 2
+    redteam_call_prompt = calls[1][0][0]
+    
+    assert "変更差分 (git diff)" in redteam_call_prompt
+    assert "修正ファイルリスト" in redteam_call_prompt
+    assert "print('hello modified uncommitted')" in redteam_call_prompt
+
+
+
+
