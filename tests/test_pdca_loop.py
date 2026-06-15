@@ -565,3 +565,66 @@ def test_example_review_templates_exist():
 
 
 
+def test_guard_rules_propagation(tmp_path: Path):
+    # Setup template files with {guard_rules} placeholder
+    eval_tmpl_file = tmp_path / "eval_template.md"
+    eval_tmpl_file.write_text("desc: {project_description}\ngoal: {project_goal}\nresult: {result}\nguard_rules: {guard_rules}", encoding="utf-8")
+
+    modify_tmpl_file = tmp_path / "modify_template.md"
+    modify_tmpl_file.write_text("desc: {project_description}\ngoal: {project_goal}\nresult: {result}\neval: {evaluation}\nguard_rules: {guard_rules}", encoding="utf-8")
+
+    # Setup guard_rules.md
+    guard_rules_file = tmp_path / "guard_rules.md"
+    guard_rules_file.write_text("- Do not use obsolete library methods\n- Handle null pointer exceptions", encoding="utf-8")
+
+    runner = create_runner(
+        tmp_path,
+        eval_template=eval_tmpl_file,
+        modify_template=modify_tmpl_file,
+        project_description="my desc",
+        project_goal="my goal"
+    )
+
+    eval_prompt = runner.render_eval_prompt("my result")
+    assert "guard_rules: - Do not use obsolete library methods\n- Handle null pointer exceptions" in eval_prompt
+
+    modify_prompt = runner.render_modify_prompt("my result", "my eval")
+    assert "guard_rules: - Do not use obsolete library methods\n- Handle null pointer exceptions" in modify_prompt
+
+
+def test_guard_rules_update(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("dummy result", encoding="utf-8")
+    (tmp_path / "target.py").write_text("print('hello')", encoding="utf-8")
+
+    # Initialize guard_rules.md
+    guard_rules_file = tmp_path / "guard_rules.md"
+    guard_rules_file.write_text("- Initial guard rule", encoding="utf-8")
+
+    runner = create_runner(
+        tmp_path,
+        target=tmp_path / "target.py"
+    )
+
+    # Mock LLM calls:
+    # 1. First call is for evaluation (in run_step)
+    # 2. Second call is for modification (in run_step)
+    # 3. Third call is for guard rules update (in run_step, after evaluation/tool execution)
+    def mock_run_llm(prompt, cmd):
+        if "現在のガードルール" in prompt:
+            return "- Initial guard rule\n- New guard rule added"
+        elif "致命的な不具合" in prompt:
+            return "evaluation response"
+        else:
+            return "modification response"
+
+    runner.run_llm = MagicMock(side_effect=mock_run_llm)
+    runner.run_tool = MagicMock(return_value="tool output")
+    runner.apply_modify_output = MagicMock()
+
+    should_continue = runner.run_step(1)
+    assert should_continue is True
+
+    # Check that guard_rules.md is updated
+    updated_content = guard_rules_file.read_text(encoding="utf-8")
+    assert "- New guard rule added" in updated_content

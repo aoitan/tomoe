@@ -43,6 +43,9 @@ DEFAULT_EVAL_TEMPLATE = """# プロジェクトの説明
 ## プロジェクトのゴール
 {project_goal}
 
+# 過去の失敗に基づくガードルール（避けるべきこと）
+{guard_rules}
+
 # 前回の実験結果
 {result}
 
@@ -76,6 +79,9 @@ DEFAULT_MODIFY_TEMPLATE = """# プロジェクトの説明
 
 ## プロジェクトのゴール
 {project_goal}
+
+# 過去の失敗に基づくガードルール（避けるべきこと）
+{guard_rules}
 
 # 前回の実験結果
 {result}
@@ -188,6 +194,31 @@ DEFAULT_SYNTHESIS_TEMPLATE = """# Next Move Synthesis
 
 4. どちらにも出ていないが人間が気にしている問題
 → まだ評価できていない可能性がある
+"""
+
+
+DEFAULT_GUARD_RULES_TEMPLATE = """# プロジェクトの説明
+{project_description}
+
+## プロジェクトのゴール
+{project_goal}
+
+# 現在のガードルール（これまでに蓄積された、避けるべき失敗パターンやアプローチ）
+{current_guard_rules}
+
+# 直近のイテレーションの実績
+## 実行結果
+{result}
+
+## 評価
+{evaluation}
+
+# 指示
+直近のイテレーションにおいて、不具合（コンパイルエラー、テスト失敗、あるいは意図しない動作）が発生したか、または評価で課題が指摘された場合、その原因を分析してください。
+同じ失敗を繰り返さないために、開発の際に「避けるべきこと」「守るべき設計方針」「具体的な対策」を「ガードルール」として抽出・追加してください。
+もし今回のイテレーションが成功しており、特に新しく追加すべき失敗パターンがない場合は、現在のガードルールをそのまま維持してください。
+既存のルールと重複する内容はまとめ、常に簡潔で具体的な「ガードルール」のリストを出力してください。
+出力はマークダウンの箇条書き（`- `）形式としてください。
 """
 
 
@@ -612,6 +643,8 @@ class LoopRunner:
             )
             return False
 
+        self.update_guard_rules(n, evaluation, result)
+
         self.log(f"[iter {n}] snapshotting inputs")
         snapshot_dir = self.snapshot(n, previous_result_path, eval_path)
         if self.args.git_checkpoint:
@@ -712,6 +745,12 @@ class LoopRunner:
             paths.insert(0, self.args.target)
         return paths
 
+    def get_guard_rules(self) -> str:
+        guard_rules_path = self.workdir / "guard_rules.md"
+        if guard_rules_path.exists():
+            return guard_rules_path.read_text(encoding="utf-8")
+        return ""
+
     def render_eval_prompt(self, result: str) -> str:
         template = read_template(self.args.eval_template, DEFAULT_EVAL_TEMPLATE)
         return SafeFormatter().format(
@@ -719,6 +758,7 @@ class LoopRunner:
             project_description=self.args.project_description,
             project_goal=self.args.project_goal,
             result=result,
+            guard_rules=self.get_guard_rules(),
         )
 
     def render_modify_prompt(self, result: str, evaluation: str) -> str:
@@ -729,6 +769,7 @@ class LoopRunner:
             project_goal=self.args.project_goal,
             result=result,
             evaluation=evaluation,
+            guard_rules=self.get_guard_rules(),
         )
 
 
@@ -1147,6 +1188,24 @@ class LoopRunner:
             status_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError as exc:
             self.log(f"warning: failed to save status.json: {exc}")
+
+    def update_guard_rules(self, n: int, evaluation: str, result: str) -> None:
+        self.log(f"[iter {n}] updating guard rules")
+        current_guard_rules = self.get_guard_rules()
+        prompt = SafeFormatter().format(
+            DEFAULT_GUARD_RULES_TEMPLATE,
+            project_description=self.args.project_description,
+            project_goal=self.args.project_goal,
+            current_guard_rules=current_guard_rules or "(なし)",
+            result=result,
+            evaluation=evaluation,
+        )
+        command = self.modify_llm_command()
+        updated_rules = self.run_llm(prompt, command)
+        
+        guard_rules_path = self.workdir / "guard_rules.md"
+        guard_rules_path.write_text(updated_rules, encoding="utf-8")
+        self.log(f"[iter {n}] wrote updated guard rules to {guard_rules_path}")
 
 
 def read_template(path: Path | None, default: str) -> str:
