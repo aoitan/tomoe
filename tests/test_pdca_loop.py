@@ -608,12 +608,12 @@ def test_guard_rules_update(tmp_path: Path):
 
     # Mock LLM calls:
     # 1. First call is for evaluation (in run_step)
-    # 2. Second call is for modification (in run_step)
-    # 3. Third call is for guard rules update (in run_step, after evaluation/tool execution)
+    # 2. Second call is for guard rules update (in run_step, after evaluation)
+    # 3. Third call is for modification (in run_step, using updated guard rules)
     def mock_run_llm(prompt, cmd):
         if "現在のガードルール" in prompt:
             return "- Initial guard rule\n- New guard rule added"
-        elif "致命的な不具合" in prompt:
+        elif "以下の2つの観点で評価を行ってください" in prompt:
             return "evaluation response"
         else:
             return "modification response"
@@ -628,3 +628,84 @@ def test_guard_rules_update(tmp_path: Path):
     # Check that guard_rules.md is updated
     updated_content = guard_rules_file.read_text(encoding="utf-8")
     assert "- New guard rule added" in updated_content
+
+
+def test_guard_rules_update_validation_fallback(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("dummy result", encoding="utf-8")
+    (tmp_path / "target.py").write_text("print('hello')", encoding="utf-8")
+
+    # Initialize guard_rules.md
+    guard_rules_file = tmp_path / "guard_rules.md"
+    guard_rules_file.write_text("- Keep me", encoding="utf-8")
+
+    runner = create_runner(
+        tmp_path,
+        target=tmp_path / "target.py"
+    )
+
+    # Test case 1: LLM returns empty string.
+    # It should fallback to keeping the original rule.
+    def mock_run_llm_empty(prompt, cmd):
+        if "現在のガードルール" in prompt:
+            return ""
+        elif "以下の2つの観点で評価を行ってください" in prompt:
+            return "evaluation response"
+        else:
+            return "modification response"
+
+    runner.run_llm = MagicMock(side_effect=mock_run_llm_empty)
+    runner.run_tool = MagicMock(return_value="tool output")
+    runner.apply_modify_output = MagicMock()
+
+    assert runner.run_step(1) is True
+    assert guard_rules_file.read_text(encoding="utf-8").strip() == "- Keep me"
+
+    # Test case 2: LLM returns text without lists/bullets.
+    # It should fallback to keeping the original rule.
+    def mock_run_llm_no_bullets(prompt, cmd):
+        if "現在のガードルール" in prompt:
+            return "This is some unstructured text without any bullet points."
+        elif "以下の2つの観点で評価を行ってください" in prompt:
+            return "evaluation response"
+        else:
+            return "modification response"
+
+    runner.run_llm = MagicMock(side_effect=mock_run_llm_no_bullets)
+    assert runner.run_step(2) is True
+    assert guard_rules_file.read_text(encoding="utf-8").strip() == "- Keep me"
+
+
+def test_guard_rules_markdown_cleaning(tmp_path: Path):
+    from unittest.mock import MagicMock
+    (tmp_path / "result_0.md").write_text("dummy result", encoding="utf-8")
+    (tmp_path / "target.py").write_text("print('hello')", encoding="utf-8")
+
+    # Initialize guard_rules.md
+    guard_rules_file = tmp_path / "guard_rules.md"
+    guard_rules_file.write_text("- Initial guard rule", encoding="utf-8")
+
+    runner = create_runner(
+        tmp_path,
+        target=tmp_path / "target.py"
+    )
+
+    # LLM returns markdown fenced code block
+    def mock_run_llm_markdown(prompt, cmd):
+        if "現在のガードルール" in prompt:
+            return "```markdown\n- Cleaned guard rule\n- Another cleaned rule\n```"
+        elif "以下の2つの観点で評価を行ってください" in prompt:
+            return "evaluation response"
+        else:
+            return "modification response"
+
+    runner.run_llm = MagicMock(side_effect=mock_run_llm_markdown)
+    runner.run_tool = MagicMock(return_value="tool output")
+    runner.apply_modify_output = MagicMock()
+
+    assert runner.run_step(1) is True
+    
+    content = guard_rules_file.read_text(encoding="utf-8")
+    assert "```" not in content
+    assert "- Cleaned guard rule" in content
+    assert "- Another cleaned rule" in content

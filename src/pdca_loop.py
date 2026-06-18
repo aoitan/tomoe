@@ -1201,10 +1201,29 @@ class LoopRunner:
             evaluation=evaluation,
         )
         command = self.modify_llm_command()
-        updated_rules = self.run_llm(prompt, command)
-        
+        raw_output = self.run_llm(prompt, command).strip()
+
+        if not raw_output:
+            self.log(f"[iter {n}] warning: LLM returned empty guard rules. Keeping previous rules.")
+            return
+
+        cleaned_rules = raw_output
+        if "```" in raw_output:
+            match = re.search(r"```(?:markdown)?[ \t]*\n(.*?)\n```", raw_output, flags=re.DOTALL)
+            if match:
+                cleaned_rules = match.group(1).strip()
+            else:
+                lines = [line for line in raw_output.split("\n") if not line.strip().startswith("```")]
+                cleaned_rules = "\n".join(lines).strip()
+
+        # Check for any line starting with markdown bullet points
+        has_bullets = any(line.strip().startswith(("-", "*", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")) for line in cleaned_rules.split("\n"))
+        if not has_bullets and current_guard_rules:
+            self.log(f"[iter {n}] warning: LLM output does not seem to contain list format. Keeping previous rules.")
+            return
+
         guard_rules_path = self.workdir / "guard_rules.md"
-        guard_rules_path.write_text(updated_rules, encoding="utf-8")
+        guard_rules_path.write_text(cleaned_rules + "\n", encoding="utf-8")
         self.log(f"[iter {n}] wrote updated guard rules to {guard_rules_path}")
 
 
